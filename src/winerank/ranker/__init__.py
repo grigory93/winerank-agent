@@ -1,0 +1,1 @@
+"""Wine ranker component (future)."""

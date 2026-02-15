@@ -2,9 +2,27 @@
 __pycache__/
 *.py[oc]
 build/
+.pytest_cache/
+.mypy_cache/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
 .venv
+
+# Environment configuration
+.env
+
+# Data
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# Database
+*.db
+*.sqlite
+
+.DS_Store

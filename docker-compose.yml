@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: winerank-postgres
+    environment:
+      POSTGRES_USER: winerank
+      POSTGRES_PASSWORD: winerank
+      POSTGRES_DB: winerank
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U winerank"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Uncomment to run crawler as a service
+  # crawler:
+  #   build: .
+  #   container_name: winerank-crawler
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     WINERANK_DATABASE_URL: postgresql+psycopg://winerank:winerank@postgres:5432/winerank
+  #     WINERANK_MICHELIN_LEVEL: "3"
+  #     WINERANK_HEADLESS: "true"
+  #   volumes:
+  #     - ./data/downloads:/app/data/downloads
+  #   command: uv run winerank crawl
+  #   restart: unless-stopped
+
+  # Uncomment to run DB Manager as a service
+  # db-manager:
+  #   build: .
+  #   container_name: winerank-db-manager
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     WINERANK_DATABASE_URL: postgresql+psycopg://winerank:winerank@postgres:5432/winerank
+  #   ports:
+  #     - "8501:8501"
+  #   command: uv run winerank db-manager --port 8501
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local

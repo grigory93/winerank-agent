@@ -1,0 +1,1 @@
+"""Restaurant crawler component."""
