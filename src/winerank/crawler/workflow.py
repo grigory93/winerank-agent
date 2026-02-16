@@ -71,6 +71,7 @@ class CrawlerState(TypedDict):
     restaurants_found: int
     restaurants_processed: int
     wine_lists_downloaded: int
+    wine_list_restaurant_names: List[str]  # names of restaurants with lists downloaded this run
     errors: List[str]
 
 
@@ -247,6 +248,7 @@ def init_job_node(state: CrawlerState) -> dict:
             "restaurants_found": 0,
             "restaurants_processed": 0,
             "wine_lists_downloaded": 0,
+            "wine_list_restaurant_names": [],
             "errors": [],
         }
 
@@ -297,8 +299,8 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
                 "errors": state.get("errors", []) + [msg],
             }
 
-        # Use the michelin_url if available, otherwise a sentinel
-        url_token = rec.michelin_url or f"__direct__:{rec.id}"
+        # Always load from DB in single-restaurant mode (skip Michelin scrape)
+        url_token = f"__direct__:{rec.id}"
         logger.info(
             "Single-restaurant mode: %s (id=%d)", rec.name, rec.id,
         )
@@ -570,9 +572,11 @@ def download_wine_list_node(state: CrawlerState) -> dict:
 
         merged = dict(restaurant)
         merged.update(result)
+        names = (state.get("wine_list_restaurant_names") or []) + [restaurant["name"]]
         return {
             "current_restaurant": merged,
             "wine_lists_downloaded": (state.get("wine_lists_downloaded") or 0) + 1,
+            "wine_list_restaurant_names": names,
         }
 
     except Exception as e:
@@ -689,12 +693,19 @@ def complete_job_node(state: CrawlerState) -> dict:
             if errors:
                 job.error_message = "\n".join(str(e) for e in errors[:20])
 
-    logger.info(
-        "Job %s complete – %s restaurants processed, %s wine lists downloaded",
-        state.get("job_id"),
-        state.get("restaurants_processed"),
-        state.get("wine_lists_downloaded"),
+    downloaded = state.get("wine_lists_downloaded") or 0
+    summary = (
+        f"Job {state.get('job_id')} complete – "
+        f"{state.get('restaurants_processed')} restaurants processed, "
+        f"{downloaded} wine lists downloaded"
     )
+
+    if downloaded > 0:
+        names = state.get("wine_list_restaurant_names") or []
+        if names:
+            summary += f": {', '.join(sorted(names))}"
+
+    logger.info(summary)
     return {}
 
 

@@ -4,7 +4,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -84,21 +84,18 @@ class WineListDownloader:
 
         filename = self._sanitize_filename(filename)
 
-        # Download with content-type detection
-        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
+        # Download with content-type detection.
+        # First attempt: httpx with browser-like headers.
+        # Fallback: Playwright (handles cookies, JS redirects, stricter servers).
+        raw_content, content_type = self._download_content(url)
 
-            content_type = response.headers.get("content-type", "").lower()
-            raw_content = response.content
-
-            # Override extension based on actual Content-Type when ambiguous
-            if extension == '.pdf' and 'html' in content_type and 'pdf' not in content_type:
-                extension = '.html'
-                filename = filename.rsplit('.', 1)[0] + '.html' if '.' in filename else 'wine_list.html'
-            elif extension == '.html' and 'pdf' in content_type:
-                extension = '.pdf'
-                filename = filename.rsplit('.', 1)[0] + '.pdf' if '.' in filename else 'wine_list.pdf'
+        # Override extension based on actual Content-Type when ambiguous
+        if extension == '.pdf' and 'html' in content_type and 'pdf' not in content_type:
+            extension = '.html'
+            filename = filename.rsplit('.', 1)[0] + '.html' if '.' in filename else 'wine_list.html'
+        elif extension == '.html' and 'pdf' in content_type:
+            extension = '.pdf'
+            filename = filename.rsplit('.', 1)[0] + '.pdf' if '.' in filename else 'wine_list.pdf'
 
         # For HTML content, check if it's a JS-rendered SPA shell
         if extension == '.html':
@@ -155,6 +152,154 @@ class WineListDownloader:
             return True
 
         return False
+
+    # Browser-like headers for httpx requests
+    _BROWSER_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                  "application/pdf,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    def _download_content(self, url: str) -> tuple[bytes, str]:
+        """Download content from *url*, returning ``(raw_bytes, content_type)``.
+
+        Tries httpx first (fast, no browser overhead).  On 401/403 falls
+        back to the Playwright page which carries a real browser session
+        with cookies, referrer, and a genuine User-Agent.
+        """
+        try:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=30.0,
+                headers=self._BROWSER_HEADERS,
+            ) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                return response.content, response.headers.get("content-type", "").lower()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in (401, 403):
+                raise
+            logger.info(
+                "httpx got %s for %s – retrying with Playwright",
+                exc.response.status_code, url,
+            )
+
+        # Fallback: use Playwright browser (has real cookies / session)
+        if not self.page:
+            raise httpx.HTTPStatusError(
+                "403 Forbidden and no Playwright page available for fallback",
+                request=httpx.Request("GET", url),
+                response=httpx.Response(403),
+            )
+
+        return self._download_via_playwright(url)
+
+    @staticmethod
+    def _listing_page_for_download_url(url: str) -> Optional[str]:
+        """For URLs like starwinelist.com/.../download/123, return the listing page URL.
+
+        Many sites require you to have visited the listing page first (sets
+        cookies / referrer) before the download link works.  Returns None if
+        not applicable.
+        """
+        parsed = urlparse(url)
+        path = (parsed.path or "").rstrip("/")
+        if "/download/" not in path.lower():
+            return None
+        # e.g. /wine-place/5182/download/6202 -> /wine-place/5182
+        base_path = path.lower().split("/download/")[0]
+        if not base_path:
+            return None
+        new = parsed._replace(path=base_path)
+        return urlunparse(new)
+
+    def _download_via_playwright(self, url: str) -> tuple[bytes, str]:
+        """Navigate to *url* with Playwright, handling both pages and file downloads.
+
+        Some URLs (e.g. starwinelist.com ``/download/``) only work after visiting
+        the listing page first (same site sets cookies).  We do that when
+        applicable, then navigate to the download URL.
+
+        Download URLs trigger a browser file-download; we listen for the
+        ``download`` event and read the temporary file Playwright produces.
+
+        Uses ``wait_until="load"`` (not ``"networkidle"``) to avoid hanging.
+        """
+        listing_url = self._listing_page_for_download_url(url)
+        if listing_url:
+            logger.info("Visiting listing page first: %s", listing_url)
+            self.page.goto(
+                listing_url,
+                timeout=self.settings.browser_timeout,
+                wait_until="load",
+            )
+            self.page.wait_for_timeout(1500)
+
+        download_obj = None
+
+        def _on_download(dl):  # noqa: ANN001
+            nonlocal download_obj
+            download_obj = dl
+
+        self.page.once("download", _on_download)
+        try:
+            resp = self.page.goto(
+                url,
+                timeout=self.settings.browser_timeout,
+                wait_until="load",
+            )
+        except Exception:
+            # page.goto raises when a download starts instead of a page load
+            if download_obj:
+                return self._read_playwright_download(download_obj)
+            raise
+
+        # Brief wait for a download event that may fire just after load
+        self.page.wait_for_timeout(3000)
+
+        if download_obj:
+            return self._read_playwright_download(download_obj)
+
+        # Check for HTTP error status
+        if resp and resp.status >= 400:
+            if resp.status == 403:
+                logger.info(
+                    "Playwright got 403 for %s – site may block headless browsers; "
+                    "try HEADLESS=false to run a visible browser",
+                    url,
+                )
+            raise httpx.HTTPStatusError(
+                f"Playwright page got {resp.status}",
+                request=httpx.Request("GET", url),
+                response=httpx.Response(resp.status),
+            )
+
+        # Regular page response
+        content_type = (resp.headers.get("content-type", "") if resp else "").lower()
+        if "html" in content_type:
+            raw_content = self.page.content().encode("utf-8")
+        else:
+            raw_content = resp.body() if resp else b""
+        return raw_content, content_type
+
+    @staticmethod
+    def _read_playwright_download(download) -> tuple[bytes, str]:
+        """Extract content and infer content-type from a Playwright Download."""
+        tmp_path = download.path()
+        raw_content = Path(tmp_path).read_bytes() if tmp_path else b""
+        suggested = (download.suggested_filename or "").lower()
+        if suggested.endswith(".pdf"):
+            content_type = "application/pdf"
+        elif suggested.endswith((".html", ".htm")):
+            content_type = "text/html"
+        else:
+            content_type = "application/octet-stream"
+        return raw_content, content_type
 
     # Labels for tabs/buttons that expand a wine-list SPA to full content.
     # Checked in order; first visible match is clicked.

@@ -179,7 +179,7 @@ WINERANK_LLM_TEMPERATURE=0.0                 # Temperature (0.0 = deterministic)
 WINERANK_LLM_MAX_TOKENS=500                  # Max tokens per response
 
 # Playwright
-WINERANK_HEADLESS=true                       # Run browser in headless mode
+WINERANK_HEADLESS=true                       # Run browser in headless mode (set false if a site returns 403 on wine-list downloads)
 WINERANK_BROWSER_TIMEOUT=30000               # Browser timeout (ms)
 ```
 

@@ -140,3 +140,45 @@ class TestLeBernardin:
         result = finder.find_wine_list(self.URL)
         if result is not None:
             assert ".pdf" in result.lower() or result.startswith("http")
+
+
+class TestBlueHillAtStoneBarns:
+    """Blue Hill at Stone Barns – FAQ page → WINE LIST section → PDF link.
+
+    The homepage links to /faq which contains a "WINE LIST" section
+    with "Please find the wine list here." where "here" links to a PDF.
+    """
+
+    URL = "https://www.bluehillfarm.com/"
+
+    def test_finds_wine_list(self, finder):
+        result = finder.find_wine_list(self.URL)
+        assert result is not None, "Expected to find wine list URL for Blue Hill"
+        assert ".pdf" in result.lower(), f"Expected PDF URL, got: {result}"
+
+    def test_metrics_populated(self, finder):
+        finder.find_wine_list(self.URL)
+        assert finder.pages_loaded >= 2, (
+            "Should visit homepage and FAQ page at minimum"
+        )
+
+
+class TestAtomix:
+    """Atomix – Chef's Counter → Wine Program section → Wine List PDF.
+
+    The homepage has a "Chef's Counter" navigation link.  That page contains
+    a "Wine Program" section with a "Wine List" link to a PDF.
+    """
+
+    URL = "https://www.atomixnyc.com/"
+
+    def test_finds_wine_list(self, finder):
+        result = finder.find_wine_list(self.URL)
+        assert result is not None, "Expected to find wine list URL for Atomix"
+        assert ".pdf" in result.lower(), f"Expected PDF URL, got: {result}"
+
+    def test_metrics_populated(self, finder):
+        finder.find_wine_list(self.URL)
+        assert finder.pages_loaded >= 2, (
+            "Should visit homepage and Chef's Counter page at minimum"
+        )

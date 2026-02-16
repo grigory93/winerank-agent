@@ -151,8 +151,26 @@ class TestScoreLink:
         boosted = finder._score_link("click here", "/link", "view our wine list here")
         assert boosted > base
 
+    def test_faq_scores_at_menu_tier(self, finder):
+        faq_score = finder._score_link("faq", "/faq", "")
+        wine_score = finder._score_link("wine", "/wine", "")
+        assert faq_score > 0, "FAQ should score > 0"
+        assert wine_score > faq_score, "Wine should score higher than FAQ"
+
+    def test_chefs_counter_scores(self, finder):
+        score = finder._score_link("chef's counter", "/chefs-counter", "")
+        assert score > 0, "Chef's Counter should score > 0"
+
+    def test_tasting_menu_scores(self, finder):
+        score = finder._score_link("tasting menu", "/tasting-menu", "")
+        assert score > 0, "Tasting Menu should score > 0"
+
+    def test_about_scores_low(self, finder):
+        about_score = finder._score_link("about", "/about", "")
+        assert about_score > 0, "About should score > 0"
+
     def test_no_match_returns_zero(self, finder):
-        score = finder._score_link("about us", "/about", "")
+        score = finder._score_link("reservations now", "/reserve", "")
         assert score == 0
 
     def test_href_slug_match(self, finder):

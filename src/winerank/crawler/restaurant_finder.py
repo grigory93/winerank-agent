@@ -135,6 +135,36 @@ class RestaurantWineListFinder:
         "the experience",
         "our menu",
         "daily menus",
+        # Dining formats common at fine-dining / Michelin restaurants
+        "chef's counter",
+        "chefs counter",
+        "chef's table",
+        "chefs table",
+        "tasting menu",
+        "tasting",
+        "bar tasting",
+        "omakase",
+        "prix fixe",
+        "prix-fixe",
+        # FAQ pages frequently contain wine list links or policies
+        "faq",
+        "faqs",
+        "frequently asked questions",
+    ]
+
+    # Tertiary: general informational pages that occasionally contain wine
+    # list links.  Scored lowest – only followed when no better candidate
+    # exists at the current depth.
+    INFORMATIONAL_KEYWORDS: list[str] = [
+        "about",
+        "about us",
+        "the restaurant",
+        "our story",
+        "guest information",
+        "information",
+        "visit",
+        "plan your visit",
+        "philosophy",
     ]
 
     # Phrases in *surrounding text* that signal a nearby link is a wine list
@@ -562,7 +592,7 @@ class RestaurantWineListFinder:
         return results
 
     def _score_link(self, text: str, href: str, context: str) -> int:
-        """Score a single link using wine keywords, menu keywords, and context."""
+        """Score a single link using wine, menu, and informational keywords."""
         score = 0
         href_lower = href.lower()
 
@@ -585,6 +615,18 @@ class RestaurantWineListFinder:
                     score += weight * 3
                 elif kw in text:
                     score += weight * 2
+                slug = kw.replace(" ", "-")
+                if slug in href_lower:
+                    score += weight * 1
+
+        # --- Informational keywords (lowest weight – last resort) ---
+        if score == 0:
+            for rank, kw in enumerate(self.INFORMATIONAL_KEYWORDS):
+                weight = len(self.INFORMATIONAL_KEYWORDS) - rank
+                if kw == text:
+                    score += weight * 1
+                elif kw in text:
+                    score += weight * 1
                 slug = kw.replace(" ", "-")
                 if slug in href_lower:
                     score += weight * 1
@@ -746,6 +788,7 @@ Consider:
 - Links with text like "Wine", "Wine List", "Wine & Spirits", "Beverage Program"
 - Links where surrounding context mentions wine (e.g. "wine list is available here")
 - Navigation items like "About" or "Menus" that commonly contain wine sections
+- Informational pages like "FAQ" that sometimes have wine list links or policies
 
 Return JSON only:
 {{"links": ["url1", "url2"], "reasoning": "brief explanation"}}
