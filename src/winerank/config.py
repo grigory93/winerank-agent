@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         description="Directory for downloaded wine lists",
     )
 
-    # LLM settings (optional, for future crawler navigation fallback)
+    # LLM settings (for intelligent wine list discovery)
     llm_provider: str = Field(
         default="openai",
         description="LLM provider: openai, anthropic, gemini, etc.",
@@ -58,8 +58,16 @@ class Settings(BaseSettings):
         description="API key for LLM provider",
     )
     use_llm_navigation: bool = Field(
-        default=False,
+        default=True,
         description="Enable LLM-assisted restaurant site navigation",
+    )
+    llm_temperature: float = Field(
+        default=0.0,
+        description="LLM temperature for deterministic responses",
+    )
+    llm_max_tokens: int = Field(
+        default=500,
+        description="Maximum tokens for LLM responses",
     )
 
     # Playwright settings

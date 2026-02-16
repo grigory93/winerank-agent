@@ -33,10 +33,23 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+# Tables managed by LangGraph (checkpoint-postgres) – Alembic must ignore them.
+LANGGRAPH_TABLES = frozenset({
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_migrations",
+    "checkpoint_writes",
+})
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    """Exclude LangGraph-managed checkpoint tables from autogenerate."""
+    if type_ == "table" and name in LANGGRAPH_TABLES:
+        return False
+    if type_ == "index" and getattr(obj, "table", None) is not None:
+        if obj.table.name in LANGGRAPH_TABLES:
+            return False
+    return True
 
 
 def run_migrations_offline() -> None:
@@ -57,6 +70,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -78,7 +92,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

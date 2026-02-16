@@ -100,3 +100,98 @@ def test_extract_unsupported_format(extractor, tmp_path):
     
     with pytest.raises(ValueError):
         extractor.extract_from_file(str(dummy_file))
+
+
+def test_extract_semantic_html(extractor, tmp_path):
+    """Test extraction from standard server-rendered HTML with semantic tags."""
+    html_file = tmp_path / "wine_list.html"
+    html_file.write_text("""<!doctype html>
+<html><body>
+<h1>Wine List</h1>
+<h2>Red Wines</h2>
+<p>Chateau Margaux 2015 - $350</p>
+<p>Opus One 2018 - $500</p>
+<h2>White Wines</h2>
+<p>Puligny-Montrachet 2019 - $180</p>
+<table><tr><th>Wine</th><th>Price</th></tr>
+<tr><td>Chablis Grand Cru</td><td>$120</td></tr></table>
+</body></html>""", encoding='utf-8')
+
+    text = extractor.extract_from_file(str(html_file))
+    assert "Wine List" in text
+    assert "Red Wines" in text
+    assert "Chateau Margaux" in text
+    assert "Opus One" in text
+    assert "Puligny-Montrachet" in text
+    assert "Chablis Grand Cru" in text
+
+
+def test_extract_spa_rendered_html(extractor, tmp_path):
+    """Test extraction from SPA-rendered HTML using divs/spans (like Binwise).
+
+    When semantic extraction yields little content, the extractor should
+    fall back to full-text extraction from divs and spans.
+    """
+    html_file = tmp_path / "wine_list.html"
+    html_file.write_text("""<!doctype html>
+<html><body>
+<div id="root">
+  <div class="header"><div>Per Se</div><div>Wine List</div></div>
+  <div class="section">
+    <div class="category">BY THE GLASS</div>
+    <div class="item">
+      <span class="name">Krug, Grande Cuvée, NV</span>
+      <span class="price">$85</span>
+    </div>
+    <div class="item">
+      <span class="name">Dom Pérignon, 2012</span>
+      <span class="price">$120</span>
+    </div>
+  </div>
+  <div class="section">
+    <div class="category">CHAMPAGNE</div>
+    <div class="item">
+      <span class="name">Louis Roederer, Cristal, 2014</span>
+      <span class="price">$650</span>
+    </div>
+  </div>
+</div>
+</body></html>""", encoding='utf-8')
+
+    text = extractor.extract_from_file(str(html_file))
+    assert "Per Se" in text
+    assert "Wine List" in text
+    assert "BY THE GLASS" in text
+    assert "Krug" in text
+    assert "Dom Pérignon" in text
+    assert "CHAMPAGNE" in text
+    assert "Louis Roederer" in text
+
+
+def test_spa_shell_detection():
+    """Test that the downloader correctly identifies SPA shell pages."""
+    from winerank.crawler.downloader import WineListDownloader
+
+    downloader = WineListDownloader()
+
+    # Typical React SPA shell (like the Binwise Per Se page)
+    spa_html = """<!doctype html><html lang="en"><head>
+    <title>Binwise: Digital Food and Beverage Menu</title>
+    <link href="./static/css/main.67e6cee6.chunk.css" rel="stylesheet">
+    </head><body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script>!function(e){var t=e.webpackJsonpbw_winelist}([])</script>
+    <script src="./static/js/main.efe789d7.chunk.js"></script>
+    </body></html>"""
+    assert downloader._is_spa_shell(spa_html) is True
+
+    # Regular server-rendered HTML with real content
+    regular_html = """<!doctype html><html><body>
+    <h1>Restaurant Wine List</h1>
+    <h2>Red Wines</h2>
+    <p>Chateau Margaux 2015 - $350</p>
+    <p>Opus One 2018 Napa Valley Cabernet Sauvignon - $500</p>
+    <p>Screaming Eagle 2019 - $3,200</p>
+    </body></html>"""
+    assert downloader._is_spa_shell(regular_html) is False

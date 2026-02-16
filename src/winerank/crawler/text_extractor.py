@@ -159,55 +159,155 @@ class WineListTextExtractor:
     def _extract_from_html(self, path: Path) -> str:
         """
         Extract text from HTML while preserving structure.
-        
+
+        Uses a two-pass strategy:
+          1. Semantic extraction – looks for standard HTML tags (h1-h6, p, ul,
+             ol, table) which works well for traditional server-rendered pages.
+          2. Full-text fallback – if semantic extraction yields very little
+             content (common with JS-rendered SPA pages like Binwise that use
+             divs/spans instead of semantic tags), falls back to extracting
+             all visible text with basic block-level separation.
+
         Args:
             path: Path to HTML file
-        
+
         Returns:
             Extracted text with structure preserved
         """
         try:
             html_content = path.read_text(encoding='utf-8')
             soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.decompose()
-            
-            extracted_text = []
-            
-            # Process headings, lists, and paragraphs with structure
-            for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'table']):
-                if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                    # Heading
-                    level = int(element.name[1])
-                    prefix = '#' * level
-                    extracted_text.append(f"\n{prefix} {element.get_text(strip=True)}\n")
-                
-                elif element.name == 'p':
-                    # Paragraph
-                    text = element.get_text(strip=True)
-                    if text:
-                        extracted_text.append(f"{text}\n")
-                
-                elif element.name in ['ul', 'ol']:
-                    # List
-                    for li in element.find_all('li', recursive=False):
-                        text = li.get_text(strip=True)
-                        if text:
-                            extracted_text.append(f"  • {text}\n")
-                
-                elif element.name == 'table':
-                    # Table
-                    extracted_text.append("\n[TABLE]\n")
-                    for row in element.find_all('tr'):
-                        cells = row.find_all(['td', 'th'])
-                        if cells:
-                            row_text = " | ".join(cell.get_text(strip=True) for cell in cells)
-                            extracted_text.append(f"{row_text}\n")
-                    extracted_text.append("\n")
-            
-            return "".join(extracted_text)
-        
+
+            # Remove script, style, and noscript elements
+            for tag in soup(["script", "style", "noscript", "svg", "meta", "link"]):
+                tag.decompose()
+
+            # Run both extraction strategies and pick the richer result.
+            # Semantic extraction works best for traditional server-rendered
+            # HTML.  Full-text extraction wins for SPA-rendered pages (React,
+            # Vue, etc.) where content lives in divs/spans, not semantic tags.
+            semantic_text = self._semantic_extract(soup)
+            fulltext_text = self._fulltext_extract(soup)
+
+            semantic_len = len(semantic_text.strip())
+            fulltext_len = len(fulltext_text.strip())
+
+            # Use fulltext if it has significantly more content (>2x) or if
+            # semantic extraction captured very little.
+            if fulltext_len > semantic_len * 2 or semantic_len < 200:
+                return fulltext_text
+
+            return semantic_text
+
         except Exception as e:
             raise Exception(f"Error extracting text from HTML: {e}")
+
+    def _semantic_extract(self, soup: BeautifulSoup) -> str:
+        """Extract text using semantic HTML tags (h1-h6, p, ul, ol, table)."""
+        extracted_text = []
+
+        for element in soup.find_all(
+            ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'table']
+        ):
+            if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                level = int(element.name[1])
+                prefix = '#' * level
+                text = element.get_text(strip=True)
+                if text:
+                    extracted_text.append(f"\n{prefix} {text}\n")
+
+            elif element.name == 'p':
+                text = element.get_text(strip=True)
+                if text:
+                    extracted_text.append(f"{text}\n")
+
+            elif element.name in ['ul', 'ol']:
+                for li in element.find_all('li', recursive=False):
+                    text = li.get_text(strip=True)
+                    if text:
+                        extracted_text.append(f"  • {text}\n")
+
+            elif element.name == 'table':
+                extracted_text.append("\n[TABLE]\n")
+                for row in element.find_all('tr'):
+                    cells = row.find_all(['td', 'th'])
+                    if cells:
+                        row_text = " | ".join(
+                            cell.get_text(strip=True) for cell in cells
+                        )
+                        extracted_text.append(f"{row_text}\n")
+                extracted_text.append("\n")
+
+        return "".join(extracted_text)
+
+    def _fulltext_extract(self, soup: BeautifulSoup) -> str:
+        """Extract all visible text with block-level separation.
+
+        Works well for SPA-rendered pages (React, Vue, Angular) that use
+        divs and spans instead of semantic HTML.  Inserts newlines at
+        block-level boundaries to preserve visual structure.
+        """
+        _BLOCK_TAGS = frozenset([
+            'div', 'section', 'article', 'aside', 'header', 'footer',
+            'nav', 'main', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            'p', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table',
+            'tr', 'td', 'th', 'br', 'hr', 'dd', 'dt', 'dl',
+            'figcaption', 'figure', 'details', 'summary',
+        ])
+
+        lines: list[str] = []
+        current_line: list[str] = []
+
+        def _flush():
+            text = ' '.join(current_line).strip()
+            if text:
+                lines.append(text)
+            current_line.clear()
+
+        def _walk(node):
+            if isinstance(node, str):
+                # NavigableString
+                text = node.strip()
+                if text:
+                    current_line.append(text)
+                return
+
+            if not hasattr(node, 'name'):
+                return
+
+            tag_name = (node.name or '').lower()
+
+            # Skip hidden elements
+            style = node.get('style', '')
+            if 'display:none' in style.replace(' ', '') or \
+               'visibility:hidden' in style.replace(' ', ''):
+                return
+
+            is_block = tag_name in _BLOCK_TAGS
+
+            if is_block:
+                _flush()
+
+            for child in node.children:
+                _walk(child)
+
+            if is_block:
+                _flush()
+
+        body = soup.find('body') or soup
+        _walk(body)
+        _flush()
+
+        # Collapse multiple blank lines
+        output: list[str] = []
+        prev_blank = False
+        for line in lines:
+            if not line:
+                if not prev_blank:
+                    output.append('')
+                prev_blank = True
+            else:
+                output.append(line)
+                prev_blank = False
+
+        return '\n'.join(output)

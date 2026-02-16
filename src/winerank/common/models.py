@@ -31,6 +31,7 @@ class CrawlStatus(str, PyEnum):
     NO_WEBSITE = "no_website"
     WINE_LIST_FOUND = "wine_list_found"
     NO_WINE_LIST = "no_wine_list"
+    DOWNLOAD_LIST_FAILED = "download_list_failed"
     ERROR = "error"
 
 
@@ -117,6 +118,17 @@ class Restaurant(Base):
         nullable=False,
     )
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Crawl performance metrics
+    crawl_duration_seconds: Mapped[Optional[float]] = mapped_column(
+        Numeric(10, 2), nullable=True, comment="Time taken to crawl this restaurant's website"
+    )
+    llm_tokens_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="Total LLM tokens used during crawl"
+    )
+    pages_visited: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="Number of pages visited during crawl"
+    )
 
     # Foreign keys
     site_of_record_id: Mapped[int] = mapped_column(

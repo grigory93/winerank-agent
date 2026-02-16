@@ -150,11 +150,25 @@ def crawl(
         "-m",
         help="Michelin level to crawl (3, 2, 1, gourmand, selected, all)",
     ),
+    restaurant: Optional[str] = typer.Option(
+        None,
+        "--restaurant",
+        help=(
+            "Crawl a single restaurant by ID (number) or name (text). "
+            "Name matching is case-insensitive and supports partial matches."
+        ),
+    ),
     resume: Optional[int] = typer.Option(
         None,
         "--resume",
         "-r",
         help="Resume job by ID",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Re-crawl all restaurants even if a wine list was already found",
     ),
     verbose: bool = typer.Option(
         False,
@@ -163,7 +177,16 @@ def crawl(
         help="Enable verbose logging",
     ),
 ):
-    """Run the restaurant crawler."""
+    """Run the restaurant crawler.
+
+    Examples:
+
+        winerank crawl --michelin 3              # all 3-star restaurants
+
+        winerank crawl --restaurant "Per Se"     # single restaurant by name
+
+        winerank crawl --restaurant 5 --force    # single restaurant by ID, force re-crawl
+    """
     import logging
 
     from winerank.config import get_settings
@@ -178,15 +201,29 @@ def crawl(
     try:
         if resume:
             console.print(f"[bold blue]Resuming crawler job {resume}...[/bold blue]")
-            run_crawler(resume_job_id=resume)
+            run_crawler(resume_job_id=resume, force_recrawl=force,
+                        restaurant_filter=restaurant)
+        elif restaurant:
+            if michelin:
+                console.print(
+                    "[yellow]--restaurant takes priority; "
+                    "ignoring --michelin[/yellow]"
+                )
+            mode = " (force re-crawl)" if force else ""
+            console.print(
+                f"[bold blue]Crawling single restaurant: "
+                f"{restaurant}{mode}...[/bold blue]"
+            )
+            run_crawler(force_recrawl=force, restaurant_filter=restaurant)
         else:
             settings = get_settings()
             michelin_level = michelin or settings.michelin_level
+            mode = " (force re-crawl)" if force else ""
             console.print(
                 f"[bold blue]Starting crawler for Michelin {michelin_level} "
-                f"restaurants...[/bold blue]"
+                f"restaurants{mode}...[/bold blue]"
             )
-            run_crawler(michelin_level=michelin_level)
+            run_crawler(michelin_level=michelin_level, force_recrawl=force)
 
         console.print("[bold green]✓ Crawler completed successfully[/bold green]")
 

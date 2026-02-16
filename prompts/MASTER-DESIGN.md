@@ -91,8 +91,21 @@ Relationships between entities:
 The following attributes are commonly associated with a Restaurant entity: 
 - restaurant_name
 - restaurant_webpage_url
+- winelist_url
+- michelin_url
 - wikipedia_url
 - reference_url
+- michelin_distinction
+- cuisine
+- price_range
+- city
+- state
+- country
+- address
+- phone
+- llm_tokens_used: total LLM tokens used during crawl including parsing restaurant website pages
+- crawl_duration_seconds: time taken to crawl this restaurant's website
+- pages_visited: number of pages visited during crawl
 - last_downloaded
 - last_updated
 - comment

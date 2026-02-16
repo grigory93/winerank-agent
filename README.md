@@ -94,6 +94,18 @@ uv run winerank crawl --michelin 2
 uv run winerank crawl --michelin gourmand
 ```
 
+Crawl a single restaurant (by name or database ID):
+```bash
+uv run winerank crawl --restaurant "Per Se"
+uv run winerank crawl --restaurant 5
+```
+
+Force re-crawl even if a wine list was already found:
+```bash
+uv run winerank crawl --restaurant "Per Se" --force
+uv run winerank crawl --michelin 3 --force
+```
+
 Resume a failed job:
 ```bash
 uv run winerank crawl --resume 42
@@ -103,6 +115,8 @@ Check job status:
 ```bash
 uv run winerank crawl-status
 ```
+
+> **Note**: When both `--restaurant` and `--michelin` are provided, `--restaurant` takes priority and `--michelin` is ignored.
 
 #### Launch DB Manager
 
@@ -120,10 +134,27 @@ The DB Manager UI will open at http://localhost:8501 with pages for:
 
 #### Database Management
 
-Reset database (destructive!):
+**Initialize database** (run migrations, safe for existing data):
+
+```bash
+uv run winerank db init
+```
+
+Use `db init` when:
+- Setting up the project for the first time (after PostgreSQL is running)
+- Pulling new code that includes schema changes (new migrations)
+- Connecting to a fresh or migrated database
+
+It runs Alembic migrations to create or update tables and seeds the Michelin Guide site of record if missing. It does **not** delete existing data.
+
+**Reset database** (destructive – wipes all data):
+
 ```bash
 uv run winerank db reset
+uv run winerank db reset -y   # skip confirmation
 ```
+
+Use `db reset` only when you want to start from scratch (e.g. after a failed crawl, for a clean test run, or when debugging). It drops all tables, recreates them, and re-seeds initial data.
 
 ## Configuration
 
@@ -139,10 +170,49 @@ WINERANK_RESTAURANT_WEBSITE_DEPTH=4          # Max link depth
 WINERANK_MAX_RESTAURANT_PAGES=20             # Max pages per restaurant
 WINERANK_CRAWLER_CONCURRENCY=3               # Parallel restaurant processing
 
+# LLM Settings (for intelligent wine list discovery)
+WINERANK_LLM_PROVIDER=openai                 # openai, anthropic, gemini, etc.
+WINERANK_LLM_MODEL=gpt-4o-mini               # Model name
+WINERANK_LLM_API_KEY=your-api-key-here       # Required for LLM features
+WINERANK_USE_LLM_NAVIGATION=true             # Enable LLM-assisted navigation
+WINERANK_LLM_TEMPERATURE=0.0                 # Temperature (0.0 = deterministic)
+WINERANK_LLM_MAX_TOKENS=500                  # Max tokens per response
+
 # Playwright
 WINERANK_HEADLESS=true                       # Run browser in headless mode
 WINERANK_BROWSER_TIMEOUT=30000               # Browser timeout (ms)
 ```
+
+## Wine List Discovery
+
+The crawler uses a multi-strategy approach to find wine lists on restaurant websites:
+
+### Cached URL Verification
+If a wine list URL was previously found, verify and reuse it (fastest path).
+
+### Smart Keyword Search
+Enhanced keyword matching with **link-context analysis** — inspects not just link text and URL, but also the surrounding paragraph text. This catches patterns like "The current version of the wine list is available *here*" where the link text itself ("here") contains no keywords.
+
+Keywords are derived from analysis of 14+ Michelin-starred restaurant websites (Per Se, French Laundry, Le Bernardin, Jungsik, Eleven Madison Park, Atelier Crenn, Smyth, and more):
+- **Wine-specific** (30 terms): "wine list", "wine & cocktails", "wine & spirits", "wine selections", "beverage program", "bar menu", "cocktail menu", "spirits selections", etc.
+- **Menu/navigation** (11 terms): "menus", "menus & stories", "dining", "the experience", etc.
+
+PDFs are scored by relevance (wine-related filenames score higher; catering decks are penalized). Irrelevant links (social media, careers, reservations, etc.) are automatically filtered out.
+
+### LLM-Guided Search
+When enabled (via `WINERANK_USE_LLM_NAVIGATION=true`), the crawler uses AI to intelligently pick which links to follow. The LLM receives a compact page summary (navigation links + text snippets) to stay economical with tokens (~300-400 per call, max 2 calls per restaurant).
+
+### SPA / Dynamic Page Handling
+Wine lists hosted on JavaScript-rendered platforms (e.g. Binwise digital menus) are automatically detected. The downloader uses Playwright to render the page, clicks interactive tabs (e.g. "Wine List") to expand full content, and captures the rendered DOM — ensuring complete wine data is downloaded even from React/Vue/Angular SPAs.
+
+### Crawl Metrics
+
+The crawler tracks detailed metrics for each restaurant:
+- **crawl_duration_seconds**: Time taken to search the restaurant's website
+- **llm_tokens_used**: Number of LLM tokens consumed (for cost tracking)
+- **pages_visited**: Number of pages explored during the search
+
+These metrics help you optimize performance, track LLM API costs, and understand success patterns.
 
 ## Database Schema
 
@@ -156,14 +226,28 @@ WINERANK_BROWSER_TIMEOUT=30000               # Browser timeout (ms)
 
 ### Run Tests
 
+**Unit tests** (fast, no network, run by default):
+
 ```bash
 uv run pytest
+uv run pytest -v                           # verbose output
+uv run pytest tests/test_models.py         # single module
 ```
 
-Test specific modules:
+**Integration tests** (hit live websites and LLM APIs, skipped by default):
+
 ```bash
-uv run pytest tests/test_models.py
-uv run pytest tests/test_text_extractor.py
+uv run pytest tests/integration/ -v -m integration          # all integration tests
+uv run pytest tests/integration/test_wine_list_finder.py -v -m integration   # wine list finder only
+uv run pytest tests/integration/ -v -m integration -k Smyth  # single restaurant
+```
+
+Integration tests require Playwright browsers installed (`uv run playwright install chromium`) and, for LLM-assisted tests, a valid `WINERANK_LLM_API_KEY` in `.env`.
+
+**All tests** (unit + integration):
+
+```bash
+uv run pytest -v -m ""                     # override the default marker filter
 ```
 
 ### Project Structure
@@ -189,14 +273,14 @@ winerank-agent/
 
 The crawler uses LangGraph with PostgreSQL checkpointing for reliable stop/resume:
 
-1. **Init Job** - Create or resume crawler job
-2. **Fetch Listing** - Scrape Michelin listing pages
-3. **Process Restaurant** - Extract restaurant details
-4. **Crawl Site** - Navigate restaurant website to find wine list
-5. **Download** - Download wine list file (PDF/HTML)
-6. **Extract Text** - Convert to structured text with pdfplumber
-7. **Save Result** - Update database with results
-8. **Complete Job** - Mark job as complete
+1. **Init Job** — Create or resume crawler job
+2. **Fetch Listing** — Scrape Michelin listing pages (or load a single restaurant from DB)
+3. **Process Restaurant** — Extract restaurant details; skip if wine list already found (unless `--force`)
+4. **Crawl Site** — Navigate restaurant website to find wine list (keyword search + optional LLM)
+5. **Download** — Download wine list file (PDF/HTML); auto-detect and render JS-rendered SPAs via Playwright
+6. **Extract Text** — Convert to structured text (pdfplumber for PDFs, smart HTML extraction for web pages)
+7. **Save Result** — Update database with crawl status and metrics
+8. **Complete Job** — Mark job as complete with summary statistics
 
 ## Deployment
 
@@ -225,6 +309,10 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for:
 - [x] Restaurant crawler with Playwright
 - [x] Wine list downloader and text extraction
 - [x] LangGraph workflow with checkpointing
+- [x] Smart skip logic (don't re-crawl restaurants with wine lists already found)
+- [x] Single-restaurant crawl (`--restaurant` option)
+- [x] SPA / dynamic page rendering (Binwise, React apps, etc.)
+- [x] Crawl metrics tracking (duration, pages visited, LLM tokens)
 - [ ] Wine List Parser with LLM
 - [ ] Wine Ranker algorithm
 - [ ] Consumer Web App

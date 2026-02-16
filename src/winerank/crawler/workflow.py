@@ -1,5 +1,6 @@
 """LangGraph workflow for restaurant crawler with PostgreSQL checkpointing."""
 import logging
+import time
 from datetime import datetime, timezone
 from typing import TypedDict, Optional, List
 
@@ -47,6 +48,13 @@ class CrawlerState(TypedDict):
     job_id: int
     michelin_level: str
     site_of_record_id: int
+
+    # Behaviour flags
+    force_recrawl: bool
+
+    # Single-restaurant filter (ID or name).  When set, the Michelin listing
+    # scrape is bypassed and the restaurant is loaded directly from the DB.
+    restaurant_filter: Optional[str]
 
     # Pagination
     total_pages: int
@@ -137,9 +145,26 @@ def create_crawler_workflow() -> StateGraph:
 # ---------------------------------------------------------------------------
 
 def _route_after_process(state: CrawlerState) -> str:
-    """After process_restaurant – crawl the site if it has a website."""
+    """After process_restaurant – crawl the site if it has a website.
+
+    Restaurants whose wine list was already found in a previous run are
+    skipped unless ``force_recrawl`` is set in the workflow state.
+    """
     restaurant = state.get("current_restaurant")
-    if restaurant and restaurant.get("website_url"):
+    if not restaurant:
+        return "save_result"
+
+    # Skip restaurants that already have a wine list (but not failed ones)
+    if (
+        restaurant.get("crawl_status") == CrawlStatus.WINE_LIST_FOUND
+        and not state.get("force_recrawl")
+    ):
+        logger.info(
+            "Skipping %s – wine list already found", restaurant.get("name")
+        )
+        return "save_result"
+
+    if restaurant.get("website_url"):
         return "crawl_site"
     return "save_result"
 
@@ -212,6 +237,8 @@ def init_job_node(state: CrawlerState) -> dict:
             "job_id": job.id,
             "michelin_level": michelin_level,
             "site_of_record_id": site.id,
+            "force_recrawl": state.get("force_recrawl", False),
+            "restaurant_filter": state.get("restaurant_filter"),
             "total_pages": 0,
             "current_page": 1,
             "restaurant_urls": [],
@@ -224,8 +251,65 @@ def init_job_node(state: CrawlerState) -> dict:
         }
 
 
+def _resolve_restaurant_filter(filter_value: str) -> Optional[Restaurant]:
+    """Look up a restaurant by ID (if numeric) or name (case-insensitive).
+
+    Returns the SQLAlchemy Restaurant object, or None if not found.
+    """
+    with get_session() as session:
+        if filter_value.isdigit():
+            return session.query(Restaurant).filter_by(
+                id=int(filter_value)
+            ).first()
+
+        # Case-insensitive exact match first
+        rec = session.query(Restaurant).filter(
+            Restaurant.name.ilike(filter_value)
+        ).first()
+        if rec:
+            return rec
+
+        # Partial match as fallback
+        rec = session.query(Restaurant).filter(
+            Restaurant.name.ilike(f"%{filter_value}%")
+        ).first()
+        return rec
+
+
 def fetch_listing_page_node(state: CrawlerState) -> dict:
-    """Fetch a Michelin listing page and extract restaurant URLs."""
+    """Fetch a Michelin listing page and extract restaurant URLs.
+
+    When ``restaurant_filter`` is set, bypasses Michelin scraping entirely
+    and loads the restaurant directly from the database.
+    """
+    # --- Single-restaurant mode ---
+    restaurant_filter = state.get("restaurant_filter")
+    if restaurant_filter:
+        rec = _resolve_restaurant_filter(restaurant_filter)
+        if not rec:
+            msg = f"Restaurant not found for filter: {restaurant_filter}"
+            logger.error(msg)
+            return {
+                "restaurant_urls": [],
+                "current_restaurant_idx": 0,
+                "restaurants_found": 0,
+                "total_pages": 1,
+                "errors": state.get("errors", []) + [msg],
+            }
+
+        # Use the michelin_url if available, otherwise a sentinel
+        url_token = rec.michelin_url or f"__direct__:{rec.id}"
+        logger.info(
+            "Single-restaurant mode: %s (id=%d)", rec.name, rec.id,
+        )
+        return {
+            "restaurant_urls": [url_token],
+            "current_restaurant_idx": 0,
+            "restaurants_found": 1,
+            "total_pages": 1,
+        }
+
+    # --- Normal Michelin listing mode ---
     page = _get_page()
     scraper = MichelinScraper(page)
     cur_page = state["current_page"]
@@ -266,8 +350,37 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
         return {"errors": state.get("errors", []) + [str(e)]}
 
 
+def _load_restaurant_from_db(restaurant_id: int) -> Optional[dict]:
+    """Load restaurant fields from the DB into a dict suitable for state."""
+    with get_session() as session:
+        rec = session.query(Restaurant).filter_by(id=restaurant_id).first()
+        if not rec:
+            return None
+        return {
+            "id": rec.id,
+            "name": rec.name,
+            "michelin_url": rec.michelin_url,
+            "website_url": rec.website_url,
+            "wine_list_url": rec.wine_list_url,
+            "michelin_distinction": (
+                getattr(rec.michelin_distinction, "value", None)
+            ),
+            "city": rec.city,
+            "state": rec.state,
+            "country": rec.country,
+            "cuisine": rec.cuisine,
+            "price_range": rec.price_range,
+            "crawl_status": rec.crawl_status,
+        }
+
+
 def process_restaurant_node(state: CrawlerState) -> dict:
-    """Visit a Michelin restaurant page and extract details."""
+    """Visit a Michelin restaurant page and extract details.
+
+    In single-restaurant mode (URLs starting with ``__direct__:``), the
+    restaurant is loaded directly from the database instead of scraping
+    Michelin.
+    """
     idx = state["current_restaurant_idx"]
     urls = state["restaurant_urls"]
 
@@ -275,6 +388,25 @@ def process_restaurant_node(state: CrawlerState) -> dict:
         return {"current_restaurant": None}
 
     restaurant_url = urls[idx]
+
+    # --- Direct DB lookup (single-restaurant mode) ---
+    if restaurant_url.startswith("__direct__:"):
+        rest_id = int(restaurant_url.split(":", 1)[1])
+        data = _load_restaurant_from_db(rest_id)
+        if data:
+            logger.info(
+                "Restaurant (direct): %s | website: %s",
+                data["name"], data.get("website_url") or "NONE",
+            )
+            return {"current_restaurant": data}
+        logger.error("Restaurant id=%d not found in DB", rest_id)
+        return {
+            "current_restaurant": None,
+            "errors": state.get("errors", [])
+                     + [f"Restaurant id={rest_id} not found"],
+        }
+
+    # --- Normal Michelin scrape path ---
     page = _get_page()
     scraper = MichelinScraper(page)
 
@@ -291,6 +423,8 @@ def process_restaurant_node(state: CrawlerState) -> dict:
 
             if existing:
                 data["id"] = existing.id
+                data["crawl_status"] = existing.crawl_status
+                data["wine_list_url"] = existing.wine_list_url
             else:
                 restaurant = Restaurant(
                     name=data["name"],
@@ -337,6 +471,9 @@ def crawl_restaurant_site_node(state: CrawlerState) -> dict:
     page = _get_page()
     finder = RestaurantWineListFinder(page)
 
+    # Start timing
+    start_time = time.time()
+    
     try:
         # Check for cached wine list URL
         cached_url = None
@@ -354,19 +491,47 @@ def crawl_restaurant_site_node(state: CrawlerState) -> dict:
             cached_wine_list_url=cached_url,
         )
 
+        # Calculate crawl duration
+        crawl_duration = time.time() - start_time
+        
+        # Capture metrics
+        tokens_used = finder.tokens_used
+        pages_visited = finder.pages_loaded
+
         if wine_list_url:
             logger.info("  -> Found wine list: %s", wine_list_url)
         else:
             logger.info("  -> No wine list found")
+        
+        logger.info("  -> Crawl metrics: %.2fs, %d pages, %d tokens",
+                    crawl_duration, pages_visited, tokens_used)
+
+        # Store metrics in restaurant dict for later persistence
+        updated_restaurant = {
+            **restaurant,
+            "wine_list_url": wine_list_url,
+            "crawl_duration_seconds": round(crawl_duration, 2),
+            "llm_tokens_used": tokens_used,
+            "pages_visited": pages_visited,
+        }
 
         return {
-            "current_restaurant": {**restaurant, "wine_list_url": wine_list_url},
+            "current_restaurant": updated_restaurant,
         }
 
     except Exception as e:
+        # Still capture timing even on error
+        crawl_duration = time.time() - start_time
+        
         logger.error("Error crawling %s: %s", restaurant.get("name"), e)
         return {
-            "current_restaurant": {**restaurant, "wine_list_url": None},
+            "current_restaurant": {
+                **restaurant,
+                "wine_list_url": None,
+                "crawl_duration_seconds": round(crawl_duration, 2),
+                "llm_tokens_used": getattr(finder, "tokens_used", 0),
+                "pages_visited": getattr(finder, "pages_loaded", 0),
+            },
             "errors": state.get("errors", []) + [str(e)],
         }
 
@@ -381,7 +546,8 @@ def download_wine_list_node(state: CrawlerState) -> dict:
         return {}
 
     try:
-        downloader = WineListDownloader()
+        page = _get_page()
+        downloader = WineListDownloader(page=page)
         slug = restaurant["name"].lower().replace(" ", "-").replace("'", "")
 
         logger.info("Downloading wine list for %s from %s",
@@ -411,7 +577,12 @@ def download_wine_list_node(state: CrawlerState) -> dict:
 
     except Exception as e:
         logger.error("Error downloading %s: %s", wine_list_url, e)
-        return {"errors": (state.get("errors") or []) + [str(e)]}
+        merged = dict(restaurant)
+        merged["download_failed"] = True
+        return {
+            "current_restaurant": merged,
+            "errors": (state.get("errors") or []) + [str(e)],
+        }
 
 
 def extract_text_node(state: CrawlerState) -> dict:
@@ -445,22 +616,47 @@ def save_result_node(state: CrawlerState) -> dict:
     """Persist the crawl outcome and advance the restaurant index."""
     restaurant = state.get("current_restaurant")
 
+    # Detect skipped restaurants: crawl_status already set from DB and no
+    # new crawl was performed (no crawl_duration_seconds).  Don't touch
+    # the DB record – just advance the index.
+    skipped = (
+        restaurant
+        and restaurant.get("crawl_status") == CrawlStatus.WINE_LIST_FOUND
+        and restaurant.get("crawl_duration_seconds") is None
+    )
+
     if restaurant and restaurant.get("id"):
         try:
             with get_session() as session:
-                rec = session.query(Restaurant).filter_by(
-                    id=restaurant["id"]
-                ).first()
-                if rec:
-                    if restaurant.get("wine_list_url"):
-                        rec.crawl_status = CrawlStatus.WINE_LIST_FOUND
-                        rec.wine_list_url = restaurant["wine_list_url"]
-                    elif restaurant.get("website_url"):
-                        rec.crawl_status = CrawlStatus.NO_WINE_LIST
-                    else:
-                        rec.crawl_status = CrawlStatus.NO_WEBSITE
-                    rec.last_crawled_at = datetime.now(timezone.utc)
+                if not skipped:
+                    rec = session.query(Restaurant).filter_by(
+                        id=restaurant["id"]
+                    ).first()
+                    if rec:
+                        if restaurant.get("download_failed"):
+                            rec.crawl_status = CrawlStatus.DOWNLOAD_LIST_FAILED
+                            rec.wine_list_url = restaurant.get("wine_list_url")
+                        elif restaurant.get("wine_list_url") and restaurant.get("local_file_path"):
+                            rec.crawl_status = CrawlStatus.WINE_LIST_FOUND
+                            rec.wine_list_url = restaurant["wine_list_url"]
+                        elif restaurant.get("wine_list_url"):
+                            rec.crawl_status = CrawlStatus.DOWNLOAD_LIST_FAILED
+                            rec.wine_list_url = restaurant["wine_list_url"]
+                        elif restaurant.get("website_url"):
+                            rec.crawl_status = CrawlStatus.NO_WINE_LIST
+                        else:
+                            rec.crawl_status = CrawlStatus.NO_WEBSITE
+                        rec.last_crawled_at = datetime.now(timezone.utc)
 
+                        # Persist crawl metrics
+                        if restaurant.get("crawl_duration_seconds") is not None:
+                            rec.crawl_duration_seconds = restaurant["crawl_duration_seconds"]
+                        if restaurant.get("llm_tokens_used") is not None:
+                            rec.llm_tokens_used = restaurant["llm_tokens_used"]
+                        if restaurant.get("pages_visited") is not None:
+                            rec.pages_visited = restaurant["pages_visited"]
+
+                # Always update job progress (including skipped restaurants)
                 job = session.query(Job).filter_by(
                     id=state["job_id"]
                 ).first()
@@ -526,12 +722,24 @@ def fail_job(job_id: int, error_msg: str) -> None:
 def run_crawler(
     michelin_level: Optional[str] = None,
     resume_job_id: Optional[int] = None,
+    force_recrawl: bool = False,
+    restaurant_filter: Optional[str] = None,
 ) -> dict:
     """
     Run the crawler workflow.
 
     A single Playwright browser is created here and shared across all nodes
     via the module-level ``_browser_page``.
+
+    Parameters
+    ----------
+    force_recrawl:
+        When *True*, re-crawl every restaurant even if a wine list was
+        already found in a previous run.
+    restaurant_filter:
+        When set, crawl only a single restaurant.  Accepts a restaurant ID
+        (numeric string) or a name (case-insensitive match).  Michelin
+        listing scrape is bypassed entirely.
     """
     global _browser_page
     settings = get_settings()
@@ -560,11 +768,17 @@ def run_crawler(
         try:
             # Initial state
             if resume_job_id:
-                initial_state: dict = {"job_id": resume_job_id}
+                initial_state: dict = {
+                    "job_id": resume_job_id,
+                    "force_recrawl": force_recrawl,
+                    "restaurant_filter": restaurant_filter,
+                }
                 job_id = resume_job_id
             else:
                 initial_state = {
                     "michelin_level": michelin_level or settings.michelin_level,
+                    "force_recrawl": force_recrawl,
+                    "restaurant_filter": restaurant_filter,
                 }
 
             thread_id = f"crawler_{resume_job_id or 'new'}_{datetime.now(timezone.utc).isoformat()}"

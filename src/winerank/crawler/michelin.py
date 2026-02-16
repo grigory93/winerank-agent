@@ -79,22 +79,43 @@ class MichelinScraper:
         """Return ``{restaurant_urls, total_restaurants, total_pages}``."""
         try:
             self.page.goto(url, timeout=self.settings.browser_timeout)
-            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_load_state("domcontentloaded")
+            
+            # Wait briefly for JS to populate the results
+            self.page.wait_for_timeout(2000)
 
             html = self.page.content()
             soup = BeautifulSoup(html, "html.parser")
 
-            # Collect all unique /restaurant/ links
-            seen: set[str] = set()
+            # Find the main results container (not promotional/nearby sections)
+            # The actual filtered results are in js-restaurant__list_items
+            results_container = soup.find("div", class_="js-restaurant__list_items")
+            
             restaurant_urls: list[str] = []
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if "/restaurant/" not in href:
+            
+            if not results_container:
+                logger.warning("Could not find main results container on %s", url)
+                return {
+                    "restaurant_urls": [],
+                    "total_restaurants": 0,
+                    "total_pages": 0,
+                }
+            
+            # Extract restaurant cards from the main results container only
+            cards = results_container.find_all("div", class_="js-restaurant__list_item")
+            
+            for card in cards:
+                # Extract the restaurant URL from the card's title link
+                title = card.find("h3", class_="card__menu-content--title")
+                if not title:
                     continue
-                full = urljoin("https://guide.michelin.com", href)
-                if full not in seen:
-                    seen.add(full)
-                    restaurant_urls.append(full)
+                
+                link = title.find("a", href=True)
+                if not link or "/restaurant/" not in link.get("href", ""):
+                    continue
+                
+                full_url = urljoin("https://guide.michelin.com", link["href"])
+                restaurant_urls.append(full_url)
 
             # Try to extract total count
             total_restaurants = 0
@@ -181,7 +202,7 @@ class MichelinScraper:
             text = a.get_text(strip=True)
             if "Visit Website" in text:
                 href = a["href"]
-                if href.startswith("http"):
+                if href.startswith("http") and "guide.michelin.com" not in href:
                     return href
 
         # Fallback: any external link whose text suggests a website

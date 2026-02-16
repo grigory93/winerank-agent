@@ -47,6 +47,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/winerank"]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that hit live websites and/or LLM APIs (deselected by default)",
+]
+addopts = "-m 'not integration'"
+
 [dependency-groups]
 dev = [
     "types-beautifulsoup4>=4.12",

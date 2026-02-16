@@ -1,13 +1,26 @@
 """Wine list downloader - download PDF/HTML wine lists and compute hashes."""
 import hashlib
+import logging
+import re
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
+from bs4 import BeautifulSoup
 from playwright.sync_api import Page
 
 from winerank.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+# Patterns that indicate a JS-rendered SPA shell with no real content
+_SPA_SHELL_INDICATORS = [
+    re.compile(r'<div\s+id=["\']root["\']\s*>\s*</div>', re.IGNORECASE),
+    re.compile(r'<div\s+id=["\']app["\']\s*>\s*</div>', re.IGNORECASE),
+    re.compile(r'<noscript>.*?enable JavaScript.*?</noscript>', re.IGNORECASE | re.DOTALL),
+    re.compile(r'webpackJsonp', re.IGNORECASE),
+]
 
 
 class WineListDownloader:
@@ -24,74 +37,6 @@ class WineListDownloader:
         self.settings = get_settings()
         self.download_dir = self.settings.download_path
     
-    async def download_wine_list(
-        self,
-        url: str,
-        restaurant_slug: str,
-    ) -> dict:
-        """
-        Download wine list from URL.
-        
-        Args:
-            url: URL of wine list (PDF or HTML)
-            restaurant_slug: Slug for restaurant (used for directory organization)
-        
-        Returns:
-            dict with:
-                - local_file_path: Path where file was saved
-                - file_hash: SHA-256 hash of file
-                - file_size: Size in bytes
-        """
-        # Create restaurant-specific directory
-        restaurant_dir = self.download_dir / self._sanitize_filename(restaurant_slug)
-        restaurant_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Determine file extension and name
-        parsed_url = urlparse(url)
-        path = parsed_url.path
-        
-        if path.lower().endswith('.pdf'):
-            extension = '.pdf'
-            filename = Path(path).name
-        elif path.lower().endswith('.html') or path.lower().endswith('.htm'):
-            extension = '.html'
-            filename = Path(path).name
-        else:
-            # Default to PDF for wine lists
-            extension = '.pdf'
-            filename = 'wine_list.pdf'
-        
-        # Ensure filename is reasonable
-        if not filename or filename == extension:
-            filename = f"wine_list{extension}"
-        
-        filename = self._sanitize_filename(filename)
-        local_path = restaurant_dir / filename
-        
-        # Download file
-        if extension == '.pdf':
-            content = await self._download_file(url)
-        else:
-            content = await self._download_html(url)
-        
-        # Save to disk
-        if extension == '.pdf':
-            local_path.write_bytes(content)
-        else:
-            local_path.write_text(content, encoding='utf-8')
-        
-        # Compute hash
-        file_hash = self._compute_hash(content if isinstance(content, bytes) else content.encode('utf-8'))
-        
-        # Get file size
-        file_size = local_path.stat().st_size
-        
-        return {
-            "local_file_path": str(local_path),
-            "file_hash": file_hash,
-            "file_size": file_size,
-        }
-    
     def download_wine_list_sync(
         self,
         url: str,
@@ -99,11 +44,16 @@ class WineListDownloader:
     ) -> dict:
         """
         Synchronous version of download_wine_list.
-        
+
+        Handles URL-encoded paths (e.g. ``wine-list.pdf%20``) and detects
+        content type from the HTTP response to avoid saving HTML as PDF.
+        For JavaScript-rendered SPA pages (e.g. Binwise), automatically falls
+        back to Playwright to render the page and capture real content.
+
         Args:
             url: URL of wine list (PDF or HTML)
             restaurant_slug: Slug for restaurant (used for directory organization)
-        
+
         Returns:
             dict with:
                 - local_file_path: Path where file was saved
@@ -113,89 +63,154 @@ class WineListDownloader:
         # Create restaurant-specific directory
         restaurant_dir = self.download_dir / self._sanitize_filename(restaurant_slug)
         restaurant_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Determine file extension and name
+
+        # Decode URL-encoded path for extension / filename detection
         parsed_url = urlparse(url)
-        path = parsed_url.path
-        
-        if path.lower().endswith('.pdf'):
+        decoded_path = unquote(parsed_url.path).strip()
+
+        if decoded_path.lower().endswith('.pdf'):
             extension = '.pdf'
-            filename = Path(path).name
-        elif path.lower().endswith('.html') or path.lower().endswith('.htm'):
+            filename = Path(decoded_path).name.strip()
+        elif decoded_path.lower().endswith(('.html', '.htm')):
             extension = '.html'
-            filename = Path(path).name
+            filename = Path(decoded_path).name.strip()
         else:
-            # Default to PDF for wine lists
             extension = '.pdf'
             filename = 'wine_list.pdf'
-        
+
         # Ensure filename is reasonable
         if not filename or filename == extension:
             filename = f"wine_list{extension}"
-        
+
         filename = self._sanitize_filename(filename)
+
+        # Download with content-type detection
+        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+            response = client.get(url)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "").lower()
+            raw_content = response.content
+
+            # Override extension based on actual Content-Type when ambiguous
+            if extension == '.pdf' and 'html' in content_type and 'pdf' not in content_type:
+                extension = '.html'
+                filename = filename.rsplit('.', 1)[0] + '.html' if '.' in filename else 'wine_list.html'
+            elif extension == '.html' and 'pdf' in content_type:
+                extension = '.pdf'
+                filename = filename.rsplit('.', 1)[0] + '.pdf' if '.' in filename else 'wine_list.pdf'
+
+        # For HTML content, check if it's a JS-rendered SPA shell
+        if extension == '.html':
+            html_text = raw_content.decode('utf-8', errors='replace')
+            if self._is_spa_shell(html_text):
+                logger.info("Detected SPA shell for %s – rendering with Playwright", url)
+                rendered_html = self._render_spa_with_playwright(url)
+                if rendered_html:
+                    raw_content = rendered_html.encode('utf-8')
+                    html_text = rendered_html
+                else:
+                    logger.warning("Playwright rendering failed for %s", url)
+
         local_path = restaurant_dir / filename
-        
-        # Download file synchronously
-        if extension == '.pdf':
-            content = self._download_file_sync(url)
-        else:
-            content = self._download_html_sync(url)
-        
+
         # Save to disk
         if extension == '.pdf':
-            local_path.write_bytes(content)
+            local_path.write_bytes(raw_content)
         else:
-            local_path.write_text(content, encoding='utf-8')
-        
+            text = raw_content.decode('utf-8', errors='replace')
+            local_path.write_text(text, encoding='utf-8')
+
         # Compute hash
-        file_hash = self._compute_hash(content if isinstance(content, bytes) else content.encode('utf-8'))
-        
+        file_hash = self._compute_hash(raw_content)
+
         # Get file size
         file_size = local_path.stat().st_size
-        
+
         return {
             "local_file_path": str(local_path),
             "file_hash": file_hash,
             "file_size": file_size,
         }
-    
-    async def _download_file(self, url: str) -> bytes:
-        """Download file using httpx (async)."""
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.content
-    
-    def _download_file_sync(self, url: str) -> bytes:
-        """Download file using httpx (synchronous)."""
-        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            return response.content
-    
-    async def _download_html(self, url: str) -> str:
-        """Download HTML page (async)."""
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.text
-    
-    def _download_html_sync(self, url: str) -> str:
-        """Download HTML page using Playwright if available, otherwise httpx."""
-        if self.page:
+
+    def _is_spa_shell(self, html_text: str) -> bool:
+        """Detect if HTML is a JS-rendered SPA shell with no real content.
+
+        Checks for common SPA indicators: empty root div, webpack bundles,
+        noscript tags asking to enable JavaScript, and very little visible
+        text content compared to the overall HTML size.
+        """
+        indicator_hits = sum(
+            1 for pattern in _SPA_SHELL_INDICATORS if pattern.search(html_text)
+        )
+        if indicator_hits >= 2:
+            return True
+
+        # Heuristic: extract visible text and check if it's suspiciously short
+        soup = BeautifulSoup(html_text, 'html.parser')
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        visible_text = soup.get_text(separator=' ', strip=True)
+        if len(html_text) > 500 and len(visible_text) < 100:
+            return True
+
+        return False
+
+    # Labels for tabs/buttons that expand a wine-list SPA to full content.
+    # Checked in order; first visible match is clicked.
+    _WINE_LIST_TAB_SELECTORS = [
+        'text="Wine List"',
+        'text="WINE LIST"',
+        'text="Full List"',
+        'text="View All"',
+        'text="View Full Menu"',
+        '.tab-content:has-text("Wine List")',
+        '.tab-content:has-text("List")',
+    ]
+
+    def _render_spa_with_playwright(self, url: str) -> Optional[str]:
+        """Use Playwright to render a JS-heavy SPA and return the DOM HTML.
+
+        Navigates to the URL, waits for the page to finish loading and for
+        dynamic content to appear.  For tabbed SPAs (e.g. Binwise digital
+        menus), automatically clicks a "Wine List" tab if one exists to
+        expand the full content before capturing.
+        """
+        if not self.page:
+            logger.warning("No Playwright page available for SPA rendering")
+            return None
+
+        try:
+            self.page.goto(url, timeout=self.settings.browser_timeout,
+                           wait_until="networkidle")
+            # Give JS extra time to finish rendering after network is idle
+            self.page.wait_for_timeout(3000)
+
+            # Try to click a "Wine List" tab to expand full content
+            self._click_wine_list_tab()
+
+            return self.page.content()
+        except Exception as e:
+            logger.error("Playwright SPA render failed for %s: %s", url, e)
+            return None
+
+    def _click_wine_list_tab(self) -> None:
+        """If the page has a 'Wine List' or similar tab, click it.
+
+        Many wine-list platforms (e.g. Binwise) open with a "Table of
+        Contents" view that shows only section headings.  Clicking the
+        "Wine List" tab switches to a full, scrollable list of all wines.
+        """
+        for selector in self._WINE_LIST_TAB_SELECTORS:
             try:
-                self.page.goto(url, timeout=self.settings.browser_timeout)
-                return self.page.content()
+                loc = self.page.locator(selector).first
+                if loc.is_visible(timeout=2000):
+                    logger.info("Clicking SPA tab: %s", selector)
+                    loc.click()
+                    self.page.wait_for_timeout(5000)
+                    return
             except Exception:
-                # Fall back to httpx
-                pass
-        
-        # Use httpx as fallback
-        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            return response.text
+                continue
     
     def _compute_hash(self, content: bytes) -> str:
         """
