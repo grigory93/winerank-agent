@@ -261,6 +261,8 @@ WINERANK_BROWSER_TIMEOUT=30000               # 30 seconds
 BrowserType.launch: Executable doesn't exist at .../chromium-1208/chrome-headless-shell
 ```
 
+**Why this happens:** Playwright browsers (~250MB) are not installed with the Python package; they must be installed explicitly. Browser versions must match the Playwright package version, and system dependencies vary by OS. Skipping this step causes immediate crawler failure.
+
 **Solution:**
 ```bash
 # Development
@@ -274,6 +276,8 @@ uv run playwright install chromium
 uv run playwright install chromium
 uv run playwright install-deps  # Install system dependencies
 ```
+
+See [Playwright Installation Docs](https://playwright.dev/python/docs/browsers) for details.
 
 ### "Invalid connection type" - Database Connection Error
 
@@ -371,6 +375,10 @@ tail -f logs/winerank.log
 2. **Secrets**: Never commit `.env` file, use secret managers
 3. **Network**: Restrict database access to application servers only
 4. **Updates**: Keep Playwright and dependencies updated for security patches
+
+### CI/CD
+
+In automated pipelines, add `uv run playwright install chromium` (and, on Linux, `uv run playwright install-deps`) before any step that runs the crawler.
 
 ## Support
 

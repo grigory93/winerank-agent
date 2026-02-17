@@ -26,3 +26,6 @@ data/
 *.sqlite
 
 .DS_Store
+
+# Exclude docs directory for now
+docs/
