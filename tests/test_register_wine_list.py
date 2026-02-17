@@ -55,7 +55,7 @@ def test_register_wine_list_updates_restaurant_status(seeded_session, tmp_path):
     ):
         result = runner.invoke(
             app,
-            ["register-wine-list", "Test Restaurant", "--file", str(pdf_path)],
+            ["register-wine-list", "--restaurant", "Test Restaurant", "--file", str(pdf_path)],
         )
 
     assert result.exit_code == 0, result.output

@@ -116,6 +116,14 @@ Check job status:
 uv run winerank crawl-status
 ```
 
+Register a manually downloaded wine list:
+```bash
+uv run winerank register-wine-list --restaurant "Smyth"
+uv run winerank register-wine-list --restaurant 5 --file ~/Downloads/wine_list.pdf
+```
+
+Use this command when you've manually downloaded a wine list PDF (e.g., from a browser) and want to register it in the database. If `--file` is not specified, the command will look for a PDF in the restaurant's download directory (`data/downloads/<restaurant-slug>/`). This creates the WineList record, extracts text to `.txt`, and marks the restaurant as `WINE_LIST_FOUND`.
+
 > **Note**: When both `--restaurant` and `--michelin` are provided, `--restaurant` takes priority and `--michelin` is ignored.
 
 #### Launch DB Manager

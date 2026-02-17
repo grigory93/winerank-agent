@@ -272,12 +272,16 @@ def crawl_status():
 
 @app.command("register-wine-list")
 def register_wine_list(
-    restaurant: str = typer.Argument(..., help="Restaurant ID or name"),
+    restaurant: str = typer.Option(
+        ...,
+        "--restaurant",
+        "-r",
+        help="Restaurant ID or name",
+    ),
     file: Optional[Path] = typer.Option(
         None,
         "--file",
         "-f",
-        path_type=Path,
         help="Path to wine list PDF (or HTML). If omitted, uses data/downloads/<slug>/ (wine_list.pdf or first .pdf)",
     ),
 ):
@@ -287,11 +291,13 @@ def register_wine_list(
     browser) into the restaurant's download directory. Creates the WineList
     record, extracts text to .txt, and marks the restaurant as WINE_LIST_FOUND.
 
-    Example:
+    Examples:
 
-        winerank register-wine-list Smyth
+        winerank register-wine-list --restaurant Smyth
 
-    (Expects a PDF in data/downloads/smyth/ e.g. wine_list.pdf)
+        winerank register-wine-list --restaurant "Per Se" --file ~/Downloads/wine_list.pdf
+
+    (When --file is omitted, expects a PDF in data/downloads/<slug>/ e.g. wine_list.pdf)
     """
     from winerank.common.db import get_session, resolve_restaurant_by_id_or_name
     from winerank.common.models import CrawlStatus, Restaurant, WineList

@@ -247,7 +247,7 @@ class Job(Base):
     michelin_level: Mapped[Optional[str]] = mapped_column(
         String(20), nullable=True, comment="Michelin level filter for crawler jobs"
     )
-    status: Mapped[str] = mapped_column(
+    status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="job_status_enum"),
         nullable=False,
         default=JobStatus.PENDING,
