@@ -27,5 +27,6 @@ data/
 
 .DS_Store
 
-# Exclude docs directory for now
+# Exclude logs, docs directory for now
+logs/
 docs/
