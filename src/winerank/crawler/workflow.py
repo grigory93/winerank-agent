@@ -23,6 +23,7 @@ from winerank.crawler.michelin import MichelinScraper
 from winerank.crawler.restaurant_finder import RestaurantWineListFinder
 from winerank.crawler.downloader import WineListDownloader
 from winerank.crawler.text_extractor import WineListTextExtractor
+from winerank.crawler.binwise_search import search_binwise
 
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,9 @@ class CrawlerState(TypedDict):
     consecutive_fetch_failures: int
     max_consecutive_failures: int
 
+    # BinWise fallback: whether search was already attempted for current restaurant
+    binwise_searched: bool
+
 
 # ---------------------------------------------------------------------------
 # Graph construction
@@ -133,6 +137,7 @@ def create_crawler_workflow() -> StateGraph:
     workflow.add_node("fetch_listing_page", fetch_listing_page_node)
     workflow.add_node("process_restaurant", process_restaurant_node)
     workflow.add_node("crawl_restaurant_site", crawl_restaurant_site_node)
+    workflow.add_node("search_binwise", search_binwise_node)
     workflow.add_node("download_wine_list", download_wine_list_node)
     workflow.add_node("extract_text", extract_text_node)
     workflow.add_node("save_result", save_result_node)
@@ -145,28 +150,49 @@ def create_crawler_workflow() -> StateGraph:
     workflow.add_edge("init_job", "fetch_listing_page")
     workflow.add_edge("fetch_listing_page", "process_restaurant")
 
-    # After processing a restaurant, decide: crawl its site or go straight
-    # to save_result (e.g. no website).
+    # After processing a restaurant, decide: crawl its site, search BinWise, or save.
     workflow.add_conditional_edges(
         "process_restaurant",
         _route_after_process,
         {
             "crawl_site": "crawl_restaurant_site",
+            "search_binwise": "search_binwise",
             "save_result": "save_result",
         },
     )
 
-    # After crawling the restaurant site, decide: download or skip to save.
+    # After crawling the restaurant site, decide: download or try BinWise.
     workflow.add_conditional_edges(
         "crawl_restaurant_site",
         _route_after_crawl,
+        {
+            "download": "download_wine_list",
+            "search_binwise": "search_binwise",
+            "save_result": "save_result",
+        },
+    )
+
+    # After BinWise search, download if URL found else save.
+    workflow.add_conditional_edges(
+        "search_binwise",
+        _route_after_binwise,
         {
             "download": "download_wine_list",
             "save_result": "save_result",
         },
     )
 
-    workflow.add_edge("download_wine_list", "extract_text")
+    # After download: extract text on success, else try BinWise or save.
+    workflow.add_conditional_edges(
+        "download_wine_list",
+        _route_after_download,
+        {
+            "extract_text": "extract_text",
+            "search_binwise": "search_binwise",
+            "save_result": "save_result",
+        },
+    )
+
     workflow.add_edge("extract_text", "save_result")
 
     # After saving, loop back or finish.
@@ -211,11 +237,35 @@ def _route_after_process(state: CrawlerState) -> str:
 
     if restaurant.get("website_url"):
         return "crawl_site"
-    return "save_result"
+    return "search_binwise"
 
 
 def _route_after_crawl(state: CrawlerState) -> str:
     """After crawl_restaurant_site – download if wine list URL was found."""
+    restaurant = state.get("current_restaurant")
+    if not restaurant:
+        return "save_result"
+    if restaurant.get("wine_list_url"):
+        return "download"
+    return "search_binwise"
+
+
+def _route_after_download(state: CrawlerState) -> str:
+    """After download_wine_list – extract text on success, else try BinWise or save."""
+    restaurant = state.get("current_restaurant")
+    if not restaurant:
+        return "save_result"
+    if restaurant.get("local_file_path") and not restaurant.get("download_failed"):
+        return "extract_text"
+    if restaurant.get("download_failed"):
+        if state.get("binwise_searched"):
+            return "save_result"
+        return "search_binwise"
+    return "save_result"
+
+
+def _route_after_binwise(state: CrawlerState) -> str:
+    """After search_binwise – download if URL found, else save result."""
     restaurant = state.get("current_restaurant")
     if restaurant and restaurant.get("wine_list_url"):
         return "download"
@@ -306,6 +356,7 @@ def init_job_node(state: CrawlerState) -> dict:
             "errors": [],
             "consecutive_fetch_failures": 0,
             "max_consecutive_failures": 3,
+            "binwise_searched": False,
         }
 
 
@@ -481,7 +532,7 @@ def process_restaurant_node(state: CrawlerState) -> dict:
                 "Restaurant (direct): %s | website: %s",
                 data["name"], data.get("website_url") or "NONE",
             )
-            return {"current_restaurant": data}
+            return {"current_restaurant": data, "binwise_searched": False}
         logger.error("Restaurant id=%d not found in DB", rest_id)
         return {
             "current_restaurant": None,
@@ -535,7 +586,7 @@ def process_restaurant_node(state: CrawlerState) -> dict:
             data["name"],
             data.get("website_url") or "NONE",
         )
-        return {"current_restaurant": data}
+        return {"current_restaurant": data, "binwise_searched": False}
 
     except Exception as e:
         logger.error("Error processing %s: %s", restaurant_url, e)
@@ -617,6 +668,38 @@ def crawl_restaurant_site_node(state: CrawlerState) -> dict:
             },
             "errors": state.get("errors", []) + [str(e)],
         }
+
+
+def search_binwise_node(state: CrawlerState) -> dict:
+    """Try to find a BinWise-hosted wine list via Google search."""
+    restaurant = state.get("current_restaurant")
+    if not restaurant:
+        return {"binwise_searched": True}
+
+    settings = get_settings()
+    if not getattr(settings, "use_binwise_search", True):
+        logger.info("BinWise search disabled – skipping for %s", restaurant.get("name"))
+        return {"binwise_searched": True}
+
+    name = restaurant.get("name") or ""
+    if not name.strip():
+        return {"binwise_searched": True}
+
+    logger.info("BinWise fallback search for %s", name)
+    url = search_binwise(name)
+
+    if url:
+        logger.info("BinWise result for %s: %s", name, url)
+        return {
+            "current_restaurant": {**restaurant, "wine_list_url": url},
+            "binwise_searched": True,
+        }
+
+    logger.info("No BinWise wine list found for %s", name)
+    return {
+        "current_restaurant": {**restaurant, "wine_list_url": None},
+        "binwise_searched": True,
+    }
 
 
 def download_wine_list_node(state: CrawlerState) -> dict:

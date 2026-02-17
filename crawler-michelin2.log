@@ -1,0 +1,306 @@
+Starting crawler for Michelin 2 restaurants...
+10:50:41  INFO      winerank.crawler.workflow  Launching browser (headless=True) …
+10:50:42  INFO      winerank.crawler.workflow  Fetching listing page 1: https://guide.michelin.com/us/en/selection/united-states/restaurants/2-stars-michelin
+10:50:42  INFO      winerank.crawler.michelin  Navigating to https://guide.michelin.com/us/en/selection/united-states/restaurants/2-stars-michelin (timeout=30000ms)
+10:50:42  INFO      winerank.crawler.michelin  Browser page state: closed=False
+10:50:46  INFO      winerank.crawler.michelin  Listing page https://guide.michelin.com/us/en/selection/united-states/restaurants/2-stars-michelin -> 40 restaurants, 40 total, 1 pages
+10:50:46  INFO      winerank.crawler.workflow  Found 40 restaurant URLs on page 1 (total so far: 40)
+10:50:46  INFO      winerank.crawler.workflow  Processing restaurant 1/40: https://guide.michelin.com/us/en/district-of-columbia/washington-dc/restaurant/jont
+10:50:56  INFO      winerank.crawler.workflow  Restaurant: Jônt | website: https://www.jontdc.com/
+10:50:56  INFO      winerank.crawler.workflow  Skipping Jônt – wine list already found
+10:50:56  INFO      winerank.crawler.workflow  Processing restaurant 2/40: https://guide.michelin.com/us/en/district-of-columbia/washington-dc/restaurant/minibar
+10:50:58  INFO      winerank.crawler.workflow  Restaurant: minibar | website: https://www.minibarbyjoseandres.com/
+10:50:58  INFO      winerank.crawler.workflow  Crawling minibar website: https://www.minibarbyjoseandres.com/
+10:50:58  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:51:10  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:51:10  INFO      winerank.crawler.workflow    -> No wine list found
+10:51:10  INFO      winerank.crawler.workflow    -> Crawl metrics: 11.47s, 5 pages, 0 tokens
+10:51:10  INFO      winerank.crawler.workflow  BinWise fallback search for minibar
+10:51:10  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "minibar" pdf
+10:51:12  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "minibar"
+10:51:13  INFO      winerank.crawler.binwise_search  No validated BinWise result for minibar
+10:51:13  INFO      winerank.crawler.workflow  No BinWise wine list found for minibar
+10:51:13  INFO      winerank.crawler.workflow  Processing restaurant 3/40: https://guide.michelin.com/us/en/district-of-columbia/washington-dc/restaurant/the-inn-at-little-washington
+10:51:15  INFO      winerank.crawler.workflow  Restaurant: The Inn at Little Washington | website: https://www.theinnatlittlewashington.com/
+10:51:15  INFO      winerank.crawler.workflow  Skipping The Inn at Little Washington – wine list already found
+10:51:15  INFO      winerank.crawler.workflow  Processing restaurant 4/40: https://guide.michelin.com/us/en/new-york-state/tarrytown/restaurant/blue-hill-at-stone-barns
+10:51:17  INFO      winerank.crawler.workflow  Restaurant: Blue Hill at Stone Barns | website: https://www.bluehillfarm.com/
+10:51:17  INFO      winerank.crawler.workflow  Skipping Blue Hill at Stone Barns – wine list already found
+10:51:17  INFO      winerank.crawler.workflow  Processing restaurant 5/40: https://guide.michelin.com/us/en/new-york-state/brooklyn/restaurant/aska
+10:51:19  INFO      winerank.crawler.workflow  Restaurant: Aska | website: https://askanyc.com/
+10:51:19  INFO      winerank.crawler.workflow  Crawling Aska website: https://askanyc.com/
+10:51:19  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:51:21  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:51:21  INFO      winerank.crawler.workflow    -> No wine list found
+10:51:21  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.43s, 1 pages, 0 tokens
+10:51:21  INFO      winerank.crawler.workflow  BinWise fallback search for Aska
+10:51:21  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Aska" pdf
+10:51:24  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Aska"
+10:51:24  INFO      winerank.crawler.binwise_search  No validated BinWise result for Aska
+10:51:24  INFO      winerank.crawler.workflow  No BinWise wine list found for Aska
+10:51:24  INFO      winerank.crawler.workflow  Processing restaurant 6/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/aquavit
+10:51:27  INFO      winerank.crawler.workflow  Restaurant: Aquavit | website: https://www.aquavit.org/
+10:51:27  INFO      winerank.crawler.workflow  Skipping Aquavit – wine list already found
+10:51:27  INFO      winerank.crawler.workflow  Processing restaurant 7/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/jean-georges
+10:51:28  INFO      winerank.crawler.workflow  Restaurant: Jean-Georges | website: https://www.jean-georgesrestaurant.com/
+10:51:28  INFO      winerank.crawler.workflow  Crawling Jean-Georges website: https://www.jean-georgesrestaurant.com/
+10:51:28  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:52:06  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:52:06  INFO      winerank.crawler.workflow    -> No wine list found
+10:52:06  INFO      winerank.crawler.workflow    -> Crawl metrics: 37.67s, 18 pages, 0 tokens
+10:52:06  INFO      winerank.crawler.workflow  BinWise fallback search for Jean-Georges
+10:52:06  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Jean-Georges" pdf
+10:52:09  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Jean-Georges"
+10:52:09  INFO      winerank.crawler.binwise_search  No validated BinWise result for Jean-Georges
+10:52:09  INFO      winerank.crawler.workflow  No BinWise wine list found for Jean-Georges
+10:52:09  INFO      winerank.crawler.workflow  Processing restaurant 8/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/atera
+10:52:12  INFO      winerank.crawler.workflow  Restaurant: Atera | website: https://ateranyc.com/
+10:52:12  INFO      winerank.crawler.workflow  Skipping Atera – wine list already found
+10:52:12  INFO      winerank.crawler.workflow  Processing restaurant 9/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/gabriel-kreuther
+10:52:14  INFO      winerank.crawler.workflow  Restaurant: Gabriel Kreuther | website: https://www.gknyc.com/
+10:52:14  INFO      winerank.crawler.workflow  Skipping Gabriel Kreuther – wine list already found
+10:52:14  INFO      winerank.crawler.workflow  Processing restaurant 10/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/saga
+10:52:17  INFO      winerank.crawler.workflow  Restaurant: Saga | website: https://www.saga-nyc.com/
+10:52:17  INFO      winerank.crawler.workflow  Crawling Saga website: https://www.saga-nyc.com/
+10:52:17  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:52:19  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:52:19  INFO      winerank.crawler.workflow    -> No wine list found
+10:52:19  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.68s, 1 pages, 0 tokens
+10:52:19  INFO      winerank.crawler.workflow  BinWise fallback search for Saga
+10:52:19  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Saga" pdf
+10:52:22  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Saga"
+10:52:23  INFO      winerank.crawler.binwise_search  No validated BinWise result for Saga
+10:52:23  INFO      winerank.crawler.workflow  No BinWise wine list found for Saga
+10:52:23  INFO      winerank.crawler.workflow  Processing restaurant 11/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/masa
+10:52:25  INFO      winerank.crawler.workflow  Restaurant: Masa | website: https://www.masanyc.com/
+10:52:25  INFO      winerank.crawler.workflow  Skipping Masa – wine list already found
+10:52:25  INFO      winerank.crawler.workflow  Processing restaurant 12/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/joo-ok-1214822
+10:52:27  INFO      winerank.crawler.workflow  Restaurant: Joo Ok | website: https://www.joo-ok.com/
+10:52:27  INFO      winerank.crawler.workflow  Skipping Joo Ok – wine list already found
+10:52:27  INFO      winerank.crawler.workflow  Processing restaurant 13/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/cesar
+10:52:29  INFO      winerank.crawler.workflow  Restaurant: César | website: https://www.cesar.restaurant/
+10:52:29  INFO      winerank.crawler.workflow  Crawling César website: https://www.cesar.restaurant/
+10:52:29  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:52:37  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:52:37  INFO      winerank.crawler.workflow    -> No wine list found
+10:52:37  INFO      winerank.crawler.workflow    -> Crawl metrics: 7.94s, 4 pages, 0 tokens
+10:52:37  INFO      winerank.crawler.workflow  BinWise fallback search for César
+10:52:37  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "César" pdf
+10:52:39  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "César"
+10:52:40  INFO      winerank.crawler.binwise_search  No validated BinWise result for César
+10:52:40  INFO      winerank.crawler.workflow  No BinWise wine list found for César
+10:52:40  INFO      winerank.crawler.workflow  Processing restaurant 14/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/odo
+10:52:42  INFO      winerank.crawler.workflow  Restaurant: odo | website: https://www.odo.nyc/
+10:52:42  INFO      winerank.crawler.workflow  Crawling odo website: https://www.odo.nyc/
+10:52:42  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:52:48  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:52:48  INFO      winerank.crawler.workflow    -> No wine list found
+10:52:48  INFO      winerank.crawler.workflow    -> Crawl metrics: 5.81s, 3 pages, 0 tokens
+10:52:48  INFO      winerank.crawler.workflow  BinWise fallback search for odo
+10:52:48  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "odo" pdf
+10:52:50  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "odo"
+10:52:51  INFO      winerank.crawler.binwise_search  No validated BinWise result for odo
+10:52:51  INFO      winerank.crawler.workflow  No BinWise wine list found for odo
+10:52:51  INFO      winerank.crawler.workflow  Processing restaurant 15/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/sushi-noz
+10:52:53  INFO      winerank.crawler.workflow  Restaurant: Sushi Noz | website: https://www.sushinoz.com/
+10:52:53  INFO      winerank.crawler.workflow  Crawling Sushi Noz website: https://www.sushinoz.com/
+10:52:53  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:52:56  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:52:56  INFO      winerank.crawler.workflow    -> No wine list found
+10:52:56  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.42s, 1 pages, 0 tokens
+10:52:56  INFO      winerank.crawler.workflow  BinWise fallback search for Sushi Noz
+10:52:56  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Sushi Noz" pdf
+10:52:59  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Sushi Noz"
+10:52:59  INFO      winerank.crawler.binwise_search  No validated BinWise result for Sushi Noz
+10:52:59  INFO      winerank.crawler.workflow  No BinWise wine list found for Sushi Noz
+10:52:59  INFO      winerank.crawler.workflow  Processing restaurant 16/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/chef-s-table-at-brooklyn-fare
+10:53:02  INFO      winerank.crawler.workflow  Restaurant: Chef's Table at Brooklyn Fare | website: https://www.brooklynfare.com/chefs-table/
+10:53:02  INFO      winerank.crawler.workflow  Skipping Chef's Table at Brooklyn Fare – wine list already found
+10:53:02  INFO      winerank.crawler.workflow  Processing restaurant 17/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/the-modern
+10:53:04  INFO      winerank.crawler.workflow  Restaurant: The Modern | website: https://www.themodernnyc.com/the-modern/
+10:53:04  INFO      winerank.crawler.workflow  Skipping The Modern – wine list already found
+10:53:04  INFO      winerank.crawler.workflow  Processing restaurant 18/40: https://guide.michelin.com/us/en/new-york-state/new-york/restaurant/atomix
+10:53:06  INFO      winerank.crawler.workflow  Restaurant: Atomix | website: https://www.atomixnyc.com/
+10:53:06  INFO      winerank.crawler.workflow  Skipping Atomix – wine list already found
+10:53:06  INFO      winerank.crawler.workflow  Processing restaurant 19/40: https://guide.michelin.com/us/en/illinois/chicago/restaurant/oriole
+10:53:08  INFO      winerank.crawler.workflow  Restaurant: Oriole | website: https://www.oriolechicago.com/
+10:53:08  INFO      winerank.crawler.workflow  Skipping Oriole – wine list already found
+10:53:08  INFO      winerank.crawler.workflow  Processing restaurant 20/40: https://guide.michelin.com/us/en/illinois/chicago/restaurant/alinea
+10:53:10  INFO      winerank.crawler.workflow  Restaurant: Alinea | website: https://www.alinearestaurant.com/
+10:53:10  INFO      winerank.crawler.workflow  Crawling Alinea website: https://www.alinearestaurant.com/
+10:53:10  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:53:13  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:53:13  INFO      winerank.crawler.workflow    -> No wine list found
+10:53:13  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.21s, 1 pages, 0 tokens
+10:53:13  INFO      winerank.crawler.workflow  BinWise fallback search for Alinea
+10:53:13  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Alinea" pdf
+10:53:15  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Alinea"
+10:53:16  INFO      winerank.crawler.binwise_search  No validated BinWise result for Alinea
+10:53:16  INFO      winerank.crawler.workflow  No BinWise wine list found for Alinea
+10:53:16  INFO      winerank.crawler.workflow  Processing restaurant 21/40: https://guide.michelin.com/us/en/illinois/chicago/restaurant/ever
+10:53:18  INFO      winerank.crawler.workflow  Restaurant: Ever | website: https://www.ever-restaurant.com/
+10:53:18  INFO      winerank.crawler.workflow  Crawling Ever website: https://www.ever-restaurant.com/
+10:53:18  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:53:28  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:53:28  INFO      winerank.crawler.workflow    -> No wine list found
+10:53:28  INFO      winerank.crawler.workflow    -> Crawl metrics: 9.81s, 5 pages, 0 tokens
+10:53:28  INFO      winerank.crawler.workflow  BinWise fallback search for Ever
+10:53:28  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Ever" pdf
+10:53:30  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Ever"
+10:53:31  INFO      winerank.crawler.binwise_search  No validated BinWise result for Ever
+10:53:31  INFO      winerank.crawler.workflow  No BinWise wine list found for Ever
+10:53:31  INFO      winerank.crawler.workflow  Processing restaurant 22/40: https://guide.michelin.com/us/en/illinois/chicago/restaurant/kasama
+10:53:33  INFO      winerank.crawler.workflow  Restaurant: Kasama | website: https://www.kasamachicago.com/
+10:53:33  INFO      winerank.crawler.workflow  Crawling Kasama website: https://www.kasamachicago.com/
+10:53:33  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:53:45  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:53:45  INFO      winerank.crawler.workflow    -> No wine list found
+10:53:45  INFO      winerank.crawler.workflow    -> Crawl metrics: 11.67s, 6 pages, 0 tokens
+10:53:45  INFO      winerank.crawler.workflow  BinWise fallback search for Kasama
+10:53:45  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Kasama" pdf
+10:53:48  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Kasama"
+10:53:48  INFO      winerank.crawler.binwise_search  No validated BinWise result for Kasama
+10:53:48  INFO      winerank.crawler.workflow  No BinWise wine list found for Kasama
+10:53:48  INFO      winerank.crawler.workflow  Processing restaurant 23/40: https://guide.michelin.com/us/en/louisiana/new-orleans_2906000/restaurant/emeril-s
+10:53:51  INFO      winerank.crawler.workflow  Restaurant: Emeril’s | website: https://emerilsrestaurant.com/
+10:53:51  INFO      winerank.crawler.workflow  Skipping Emeril’s – wine list already found
+10:53:51  INFO      winerank.crawler.workflow  Processing restaurant 24/40: https://guide.michelin.com/us/en/colorado/denver_1261491/restaurant/the-wolf-s-tailor
+10:53:53  INFO      winerank.crawler.workflow  Restaurant: The Wolf's Tailor | website: https://www.thewolfstailor.com/
+10:53:53  INFO      winerank.crawler.workflow  Crawling The Wolf's Tailor website: https://www.thewolfstailor.com/
+10:53:53  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:53:55  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:53:55  INFO      winerank.crawler.workflow    -> No wine list found
+10:53:55  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.22s, 1 pages, 0 tokens
+10:53:55  INFO      winerank.crawler.workflow  BinWise fallback search for The Wolf's Tailor
+10:53:55  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "The Wolf's Tailor" pdf
+10:53:58  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "The Wolf's Tailor"
+10:53:58  INFO      winerank.crawler.binwise_search  No validated BinWise result for The Wolf's Tailor
+10:53:58  INFO      winerank.crawler.workflow  No BinWise wine list found for The Wolf's Tailor
+10:53:58  INFO      winerank.crawler.workflow  Processing restaurant 25/40: https://guide.michelin.com/us/en/california/culver-city/restaurant/vespertine
+10:54:01  INFO      winerank.crawler.workflow  Restaurant: Vespertine | website: https://vespertine.la/
+10:54:01  INFO      winerank.crawler.workflow  Crawling Vespertine website: https://vespertine.la/
+10:54:01  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:54:03  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:54:03  INFO      winerank.crawler.workflow    -> No wine list found
+10:54:03  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.58s, 1 pages, 0 tokens
+10:54:03  INFO      winerank.crawler.workflow  BinWise fallback search for Vespertine
+10:54:03  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Vespertine" pdf
+10:54:06  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Vespertine"
+10:54:06  INFO      winerank.crawler.binwise_search  No validated BinWise result for Vespertine
+10:54:06  INFO      winerank.crawler.workflow  No BinWise wine list found for Vespertine
+10:54:07  INFO      winerank.crawler.workflow  Processing restaurant 26/40: https://guide.michelin.com/us/en/california/carmel-by-the-sea/restaurant/aubergine
+10:54:09  INFO      winerank.crawler.workflow  Restaurant: Aubergine | website: https://www.auberginecarmel.com/
+10:54:09  INFO      winerank.crawler.workflow  Crawling Aubergine website: https://www.auberginecarmel.com/
+10:54:09  INFO      winerank.crawler.restaurant_finder    Tier 1: verifying cached URL https://auberginecarmel.com/wp-content/uploads/Aubergine-Wine-List-07.20525.pdf
+10:54:09  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:54:17  INFO      winerank.crawler.restaurant_finder      Found wine-related PDF: https://auberginecarmel.com/wp-content/uploads/Aubergine-Wine-List-07.20525.pdf
+10:54:17  INFO      winerank.crawler.workflow    -> Found wine list: https://auberginecarmel.com/wp-content/uploads/Aubergine-Wine-List-07.20525.pdf
+10:54:17  INFO      winerank.crawler.workflow    -> Crawl metrics: 8.45s, 1 pages, 0 tokens
+10:54:17  INFO      winerank.crawler.workflow  Downloading wine list for Aubergine from https://auberginecarmel.com/wp-content/uploads/Aubergine-Wine-List-07.20525.pdf
+10:54:23  INFO      winerank.crawler.workflow  Processing restaurant 27/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/birdsong
+10:54:26  INFO      winerank.crawler.workflow  Restaurant: Birdsong | website: https://www.birdsongsf.com/
+10:54:26  INFO      winerank.crawler.workflow  Crawling Birdsong website: https://www.birdsongsf.com/
+10:54:26  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:54:28  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:54:28  INFO      winerank.crawler.workflow    -> No wine list found
+10:54:28  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.34s, 1 pages, 0 tokens
+10:54:28  INFO      winerank.crawler.workflow  BinWise fallback search for Birdsong
+10:54:28  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Birdsong" pdf
+10:54:31  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Birdsong"
+10:54:31  INFO      winerank.crawler.binwise_search  No validated BinWise result for Birdsong
+10:54:31  INFO      winerank.crawler.workflow  No BinWise wine list found for Birdsong
+10:54:31  INFO      winerank.crawler.workflow  Processing restaurant 28/40: https://guide.michelin.com/us/en/california/sonoma/restaurant/enclos
+10:54:34  INFO      winerank.crawler.workflow  Restaurant: Enclos | website: https://enclos-sonoma.com/
+10:54:34  INFO      winerank.crawler.workflow  Skipping Enclos – wine list already found
+10:54:34  INFO      winerank.crawler.workflow  Processing restaurant 29/40: https://guide.michelin.com/us/en/california/oakland/restaurant/commis
+10:54:36  INFO      winerank.crawler.workflow  Restaurant: Commis | website: https://www.commisrestaurant.com/
+10:54:36  INFO      winerank.crawler.workflow  Crawling Commis website: https://www.commisrestaurant.com/
+10:54:36  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:54:41  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:54:41  INFO      winerank.crawler.workflow    -> No wine list found
+10:54:41  INFO      winerank.crawler.workflow    -> Crawl metrics: 5.09s, 1 pages, 0 tokens
+10:54:41  INFO      winerank.crawler.workflow  BinWise fallback search for Commis
+10:54:41  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Commis" pdf
+10:54:43  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Commis"
+10:54:44  INFO      winerank.crawler.binwise_search  No validated BinWise result for Commis
+10:54:44  INFO      winerank.crawler.workflow  No BinWise wine list found for Commis
+10:54:44  INFO      winerank.crawler.workflow  Processing restaurant 30/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/acquerello
+10:54:46  INFO      winerank.crawler.workflow  Restaurant: Acquerello | website: https://www.acquerellosf.com
+10:54:46  INFO      winerank.crawler.workflow  Skipping Acquerello – wine list already found
+10:54:46  INFO      winerank.crawler.workflow  Processing restaurant 31/40: https://guide.michelin.com/us/en/california/us-los-angeles/restaurant/hayato
+10:54:48  INFO      winerank.crawler.workflow  Restaurant: Hayato | website: https://hayatorestaurant.com/
+10:54:48  INFO      winerank.crawler.workflow  Crawling Hayato website: https://hayatorestaurant.com/
+10:54:48  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:55:18  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:55:18  INFO      winerank.crawler.workflow    -> No wine list found
+10:55:18  INFO      winerank.crawler.workflow    -> Crawl metrics: 29.98s, 0 pages, 0 tokens
+10:55:18  INFO      winerank.crawler.workflow  BinWise fallback search for Hayato
+10:55:18  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Hayato" pdf
+10:55:21  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Hayato"
+10:55:21  INFO      winerank.crawler.binwise_search  No validated BinWise result for Hayato
+10:55:21  INFO      winerank.crawler.workflow  No BinWise wine list found for Hayato
+10:55:21  INFO      winerank.crawler.workflow  Processing restaurant 32/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/sons-daughters
+10:55:24  INFO      winerank.crawler.workflow  Restaurant: Sons & Daughters | website: https://www.sonsanddaughterssf.com/
+10:55:24  INFO      winerank.crawler.workflow  Crawling Sons & Daughters website: https://www.sonsanddaughterssf.com/
+10:55:24  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:55:29  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:55:29  INFO      winerank.crawler.workflow    -> No wine list found
+10:55:29  INFO      winerank.crawler.workflow    -> Crawl metrics: 5.59s, 3 pages, 0 tokens
+10:55:29  INFO      winerank.crawler.workflow  BinWise fallback search for Sons & Daughters
+10:55:29  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Sons & Daughters" pdf
+10:55:32  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Sons & Daughters"
+10:55:33  INFO      winerank.crawler.binwise_search  No validated BinWise result for Sons & Daughters
+10:55:33  INFO      winerank.crawler.workflow  No BinWise wine list found for Sons & Daughters
+10:55:33  INFO      winerank.crawler.workflow  Processing restaurant 33/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/saison
+10:55:35  INFO      winerank.crawler.workflow  Restaurant: Saison | website: https://www.saisonsf.com/
+10:55:35  INFO      winerank.crawler.workflow  Skipping Saison – wine list already found
+10:55:35  INFO      winerank.crawler.workflow  Processing restaurant 34/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/californios
+10:55:37  INFO      winerank.crawler.workflow  Restaurant: Californios | website: https://www.californiossf.com
+10:55:37  INFO      winerank.crawler.workflow  Crawling Californios website: https://www.californiossf.com
+10:55:37  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:55:40  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:55:40  INFO      winerank.crawler.workflow    -> No wine list found
+10:55:40  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.85s, 1 pages, 0 tokens
+10:55:40  INFO      winerank.crawler.workflow  BinWise fallback search for Californios
+10:55:40  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Californios" pdf
+10:55:43  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Californios"
+10:55:44  INFO      winerank.crawler.binwise_search  No validated BinWise result for Californios
+10:55:44  INFO      winerank.crawler.workflow  No BinWise wine list found for Californios
+10:55:44  INFO      winerank.crawler.workflow  Processing restaurant 35/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/lazy-bear
+10:55:46  INFO      winerank.crawler.workflow  Restaurant: Lazy Bear | website: https://www.lazybearsf.com
+10:55:46  INFO      winerank.crawler.workflow  Skipping Lazy Bear – wine list already found
+10:55:46  INFO      winerank.crawler.workflow  Processing restaurant 36/40: https://guide.michelin.com/us/en/california/elk/restaurant/harbor-house
+10:55:48  INFO      winerank.crawler.workflow  Restaurant: Harbor House | website: https://www.theharborhouseinn.com/
+10:55:48  INFO      winerank.crawler.workflow  Skipping Harbor House – wine list already found
+10:55:48  INFO      winerank.crawler.workflow  Processing restaurant 37/40: https://guide.michelin.com/us/en/california/santa-monica/restaurant/melisse
+10:55:50  INFO      winerank.crawler.workflow  Restaurant: Mélisse | website: https://www.citrinandmelisse.com/
+10:55:50  INFO      winerank.crawler.workflow  Skipping Mélisse – wine list already found
+10:55:50  INFO      winerank.crawler.workflow  Processing restaurant 38/40: https://guide.michelin.com/us/en/california/san-francisco/restaurant/kiln-1210355
+10:55:52  INFO      winerank.crawler.workflow  Restaurant: Kiln | website: https://www.kilnsf.com/
+10:55:52  INFO      winerank.crawler.workflow  Crawling Kiln website: https://www.kilnsf.com/
+10:55:52  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:55:56  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:55:56  INFO      winerank.crawler.workflow    -> No wine list found
+10:55:56  INFO      winerank.crawler.workflow    -> Crawl metrics: 4.08s, 2 pages, 0 tokens
+10:55:56  INFO      winerank.crawler.workflow  BinWise fallback search for Kiln
+10:55:56  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Kiln" pdf
+10:55:59  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Kiln"
+10:55:59  INFO      winerank.crawler.binwise_search  No validated BinWise result for Kiln
+10:55:59  INFO      winerank.crawler.workflow  No BinWise wine list found for Kiln
+10:55:59  INFO      winerank.crawler.workflow  Processing restaurant 39/40: https://guide.michelin.com/us/en/florida/miami/restaurant/l-atelier-de-joel-robuchon-miami
+10:56:02  INFO      winerank.crawler.workflow  Restaurant: L'Atelier de Joël Robuchon Miami | website: https://latelier-miami.com/
+10:56:02  INFO      winerank.crawler.workflow  Skipping L'Atelier de Joël Robuchon Miami – wine list already found
+10:56:02  INFO      winerank.crawler.workflow  Processing restaurant 40/40: https://guide.michelin.com/us/en/florida/orlando/restaurant/sorekara
+10:56:03  INFO      winerank.crawler.workflow  Restaurant: Sorekara | website: https://sorekarafl.com
+10:56:03  INFO      winerank.crawler.workflow  Crawling Sorekara website: https://sorekarafl.com
+10:56:03  INFO      winerank.crawler.restaurant_finder    Tier 2: smart keyword search
+10:56:06  INFO      winerank.crawler.restaurant_finder    Tier 3: LLM-guided search
+10:56:06  INFO      winerank.crawler.workflow    -> No wine list found
+10:56:06  INFO      winerank.crawler.workflow    -> Crawl metrics: 2.25s, 1 pages, 0 tokens
+10:56:06  INFO      winerank.crawler.workflow  BinWise fallback search for Sorekara
+10:56:06  INFO      winerank.crawler.binwise_search  BinWise search pass 1 (pdf): site:hub.binwise.com "Sorekara" pdf
+10:56:08  INFO      winerank.crawler.binwise_search  BinWise search pass 2 (html): site:hub.binwise.com "Sorekara"
+10:56:09  INFO      winerank.crawler.binwise_search  No validated BinWise result for Sorekara
+10:56:09  INFO      winerank.crawler.workflow  No BinWise wine list found for Sorekara
+10:56:09  INFO      winerank.crawler.workflow  Job 13 complete – 40 restaurants processed, 1 wine lists downloaded: Aubergine
+✓ Crawler completed successfully

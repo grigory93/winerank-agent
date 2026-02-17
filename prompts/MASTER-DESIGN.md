@@ -112,7 +112,7 @@ The following attributes are commonly associated with a Restaurant entity:
 
 #### Wine List
 The following attributres are commonly associated with a Wine List entity:
-- restaurant_name
+- restaurant reference
 - list_name
 - wine_list_url
 - local_file_path
@@ -123,7 +123,7 @@ The following attributres are commonly associated with a Wine List entity:
 
 #### Wine
 The following attributes are commonly associated with Wine entity:
-- restaurant_name: Restaurant the wine list that contains the wine is from
+- wine list reference: Restaurant the wine list that contains the wine is from
 - name: usually unique wine name, may or may not include or may or may not be the name as the name of the winery
 - winery: the winery name that produced the wine
 - varietal: wine grape varietal or blend designation or similar, e.g. Riesling, Chenin Blanc, Champagne, Chardonnay, and so on (optional in some cases but usually present or found from the context)
@@ -134,6 +134,7 @@ The following attributes are commonly associated with Wine entity:
 - vintage: year of the wine (possible value is non-vintage - NV)
 - format: bottle type or by the glass
 - price: wine price
+- internal reference (bin number or similar, optional)
 - note: any extra info that doesn't fit into the above attributes (optional)
 
 #### Job
@@ -231,7 +232,11 @@ The Crawler should:
 We might want to consider maintaining additional Job info in the database that allows us to checkpoint/resume/restart/continue any Crawler job run.
 This process should be robust and reliable to interrupt and resume with no overhead or duplciate work. It's up to the agent how to organize the work: collect all restaurant websites first or not. Preferrable the approach should be such that we can parallelize the work.
 
-Automatic scraping should support dynamic web sites for both Michelin site and restaurant sites. That means that it shoud be able to navigate , parse and analyze JavaScript-rendered web pages (React, Vue, Angular, Nuxt.js) by utilizing advanced features of Playwright, for example.
+Automatic crawl and parsing web pages should support dynamic web sites for both Michelin site and restaurant sites. That means that it shoud be able to navigate , parse and analyze JavaScript-rendered web pages (React, Vue, Angular, Nuxt.js) by utilizing advanced features of Playwright, for example.
+
+Consider using LLM in the Crawler to parse the text of the page (html or javascript-generarted) to find the potential links to the wine lists or the links to the pages leading to the wine list. 
+
+Whenb using LLM I want to be rational about token use not to parse exessively web pages. Add various stats in the restaurant model reflecting the effort of finding wine list for a restaurant: time taken, token count, pages navigated when crawling and parsing pages to have some idea of the effort and resources spent. While at that add both token count and time taken to crawl and parse each restaurant - these stats are important to understand the effort.
 
 Include a feature that allows manual override of the wine list location per restaurant on case by case basis: probably by using the Wine Database with information about restaurant and location of its wine list. If the database already contains restaurant and its wine list info then just follow this link, the worst case report that the link is not valid anymore. This approach should work for both the manual override and for the restaurant sites that were crawled before and now just need an update of their wine list.
 

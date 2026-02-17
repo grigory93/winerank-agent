@@ -9,6 +9,8 @@ from winerank.common.models import CrawlStatus
 from winerank.crawler.workflow import (
     _route_after_process,
     _route_after_crawl,
+    _route_after_download,
+    _route_after_binwise,
     _route_after_save,
 )
 
@@ -33,7 +35,8 @@ class TestRouteAfterProcess:
         }
         assert _route_after_process(state) == "crawl_site"
 
-    def test_no_website_goes_to_save(self):
+    def test_no_website_goes_to_search_binwise(self):
+        """When no restaurant website found on Michelin page, trigger BinWise search."""
         state = {
             "current_restaurant": {
                 "website_url": None,
@@ -41,7 +44,19 @@ class TestRouteAfterProcess:
             },
             "force_recrawl": False,
         }
-        assert _route_after_process(state) == "save_result"
+        assert _route_after_process(state) == "search_binwise"
+
+    def test_no_website_empty_string_goes_to_search_binwise(self):
+        """Empty string website_url (e.g. from Michelin scrape) also triggers BinWise."""
+        state = {
+            "current_restaurant": {
+                "name": "Some Restaurant",
+                "website_url": "",
+                "crawl_status": CrawlStatus.NO_WEBSITE,
+            },
+            "force_recrawl": False,
+        }
+        assert _route_after_process(state) == "search_binwise"
 
     def test_wine_list_found_skips_crawl(self):
         state = {
@@ -105,11 +120,80 @@ class TestRouteAfterCrawl:
                 "wine_list_url": None,
             },
         }
-        assert _route_after_crawl(state) == "save_result"
+        assert _route_after_crawl(state) == "search_binwise"
 
     def test_no_restaurant(self):
         state = {"current_restaurant": None}
         assert _route_after_crawl(state) == "save_result"
+
+
+# ------------------------------------------------------------------
+# _route_after_download
+# ------------------------------------------------------------------
+
+class TestRouteAfterDownload:
+
+    def test_success_goes_to_extract_text(self):
+        state = {
+            "current_restaurant": {
+                "local_file_path": "/path/to/file.pdf",
+                "download_failed": False,
+            },
+        }
+        assert _route_after_download(state) == "extract_text"
+
+    def test_download_failed_binwise_not_tried_goes_to_search_binwise(self):
+        state = {
+            "current_restaurant": {
+                "wine_list_url": "https://example.com/wine.pdf",
+                "local_file_path": None,
+                "download_failed": True,
+            },
+            "binwise_searched": False,
+        }
+        assert _route_after_download(state) == "search_binwise"
+
+    def test_download_failed_binwise_already_tried_goes_to_save_result(self):
+        state = {
+            "current_restaurant": {
+                "wine_list_url": "https://hub.binwise.com/list/abc",
+                "local_file_path": None,
+                "download_failed": True,
+            },
+            "binwise_searched": True,
+        }
+        assert _route_after_download(state) == "save_result"
+
+    def test_no_restaurant_goes_to_save_result(self):
+        state = {"current_restaurant": None}
+        assert _route_after_download(state) == "save_result"
+
+
+# ------------------------------------------------------------------
+# _route_after_binwise
+# ------------------------------------------------------------------
+
+class TestRouteAfterBinwise:
+
+    def test_url_found_goes_to_download(self):
+        state = {
+            "current_restaurant": {
+                "wine_list_url": "https://hub.binwise.com/list/xyz",
+            },
+        }
+        assert _route_after_binwise(state) == "download"
+
+    def test_no_url_goes_to_save_result(self):
+        state = {
+            "current_restaurant": {
+                "wine_list_url": None,
+            },
+        }
+        assert _route_after_binwise(state) == "save_result"
+
+    def test_no_restaurant_goes_to_save_result(self):
+        state = {"current_restaurant": None}
+        assert _route_after_binwise(state) == "save_result"
 
 
 # ------------------------------------------------------------------

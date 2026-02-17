@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default="data/downloads",
         description="Directory for downloaded wine lists",
     )
+    use_binwise_search: bool = Field(
+        default=True,
+        description="Enable BinWise fallback search via Google when no wine list found",
+    )
 
     # LLM settings (for intelligent wine list discovery)
     llm_provider: str = Field(
