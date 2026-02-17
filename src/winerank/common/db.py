@@ -1,6 +1,8 @@
 """Database session management and utilities."""
+from __future__ import annotations
+
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
@@ -63,6 +65,28 @@ def get_session() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
+
+def resolve_restaurant_by_id_or_name(identifier: str) -> Optional["Restaurant"]:
+    """Look up a restaurant by ID (if numeric) or name (case-insensitive).
+
+    Strips whitespace from identifier. Tries exact name match first, then partial.
+    Returns the Restaurant ORM object or None if not found.
+    """
+    from winerank.common.models import Restaurant
+
+    value = identifier.strip()
+    if not value:
+        return None
+    with get_session() as session:
+        if value.isdigit():
+            return session.query(Restaurant).filter_by(id=int(value)).first()
+        rec = session.query(Restaurant).filter(Restaurant.name.ilike(value)).first()
+        if rec:
+            return rec
+        return (
+            session.query(Restaurant).filter(Restaurant.name.ilike(f"%{value}%")).first()
+        )
 
 
 def init_db() -> None:

@@ -95,7 +95,7 @@ class Restaurant(Base):
     wine_list_url: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True, comment="Cached direct URL to wine list"
     )
-    michelin_distinction: Mapped[Optional[str]] = mapped_column(
+    michelin_distinction: Mapped[Optional[MichelinDistinction]] = mapped_column(
         Enum(MichelinDistinction, name="michelin_distinction_enum"), nullable=True
     )
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -103,7 +103,7 @@ class Restaurant(Base):
     country: Mapped[str] = mapped_column(String(100), nullable=False, default="USA")
     cuisine: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     price_range: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    crawl_status: Mapped[str] = mapped_column(
+    crawl_status: Mapped[CrawlStatus] = mapped_column(
         Enum(CrawlStatus, name="crawl_status_enum"),
         nullable=False,
         default=CrawlStatus.PENDING,

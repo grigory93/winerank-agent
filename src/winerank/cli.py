@@ -270,5 +270,108 @@ def crawl_status():
         console.print(table)
 
 
+@app.command("register-wine-list")
+def register_wine_list(
+    restaurant: str = typer.Argument(..., help="Restaurant ID or name"),
+    file: Optional[Path] = typer.Option(
+        None,
+        "--file",
+        "-f",
+        path_type=Path,
+        help="Path to wine list PDF (or HTML). If omitted, uses data/downloads/<slug>/ (wine_list.pdf or first .pdf)",
+    ),
+):
+    """Register a manually downloaded wine list and run text extraction.
+
+    Use this when you downloaded the wine list file yourself (e.g. from a
+    browser) into the restaurant's download directory. Creates the WineList
+    record, extracts text to .txt, and marks the restaurant as WINE_LIST_FOUND.
+
+    Example:
+
+        winerank register-wine-list Smyth
+
+    (Expects a PDF in data/downloads/smyth/ e.g. wine_list.pdf)
+    """
+    from winerank.common.db import get_session, resolve_restaurant_by_id_or_name
+    from winerank.common.models import CrawlStatus, Restaurant, WineList
+    from winerank.config import get_settings
+    from winerank.crawler.downloader import WineListDownloader
+    from winerank.crawler.text_extractor import WineListTextExtractor
+
+    rec = resolve_restaurant_by_id_or_name(restaurant)
+    if not rec:
+        console.print(f"[bold red]Restaurant not found: {restaurant}[/bold red]")
+        raise typer.Exit(1)
+
+    restaurant_id, name, wine_list_url = rec.id, rec.name, rec.wine_list_url
+    settings = get_settings()
+    download_path = settings.download_path
+
+    if file is not None:
+        path = file.resolve()
+        if not path.is_file():
+            console.print(f"[bold red]File not found or not a file: {path}[/bold red]")
+            raise typer.Exit(1)
+    else:
+        slug = name.lower().replace(" ", "-").replace("'", "")
+        dir_path = download_path / slug
+        if not dir_path.is_dir():
+            console.print(
+                f"[bold red]No download directory for {name}. "
+                f"Create {dir_path} and add a PDF, or use --file path[/bold red]"
+            )
+            raise typer.Exit(1)
+        candidate = dir_path / "wine_list.pdf"
+        if candidate.exists():
+            path = candidate
+        else:
+            pdfs = sorted(dir_path.glob("*.pdf"))
+            if not pdfs:
+                console.print(
+                    f"[bold red]No PDF found in {dir_path}. "
+                    f"Add wine_list.pdf or use --file path[/bold red]"
+                )
+                raise typer.Exit(1)
+            path = pdfs[0]
+
+    console.print(f"[bold blue]Registering wine list for {name} from {path}[/bold blue]")
+
+    raw = path.read_bytes()
+    file_hash = WineListDownloader._compute_hash(raw)
+
+    try:
+        extractor = WineListTextExtractor()
+        text_path = extractor.extract_and_save(str(path))
+    except Exception as e:
+        console.print(f"[bold red]Error extracting text: {e}[/bold red]")
+        raise typer.Exit(1)
+
+    source_url = wine_list_url if wine_list_url else "manual"
+
+    with get_session() as session:
+        rec = session.query(Restaurant).filter_by(id=restaurant_id).first()
+        if not rec:
+            console.print(f"[bold red]Restaurant {restaurant_id} no longer in DB[/bold red]")
+            raise typer.Exit(1)
+
+        wine_list = WineList(
+            restaurant_id=restaurant_id,
+            list_name=f"{name} Wine List",
+            source_url=source_url,
+            local_file_path=str(path),
+            file_hash=file_hash,
+            wine_count=0,
+        )
+        session.add(wine_list)
+        wine_list.text_file_path = text_path
+        rec.crawl_status = CrawlStatus.WINE_LIST_FOUND
+        if wine_list_url:
+            rec.wine_list_url = wine_list_url
+        session.commit()
+
+    console.print(f"[bold green]Wine list registered (id={wine_list.id}), text saved to {text_path}[/bold green]")
+
+
 if __name__ == "__main__":
     app()

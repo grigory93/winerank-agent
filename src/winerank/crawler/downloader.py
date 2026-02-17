@@ -230,6 +230,9 @@ class WineListDownloader:
 
         Uses ``wait_until="load"`` (not ``"networkidle"``) to avoid hanging.
         """
+        if not self.page:
+            raise RuntimeError("No Playwright page available for download")
+
         listing_url = self._listing_page_for_download_url(url)
         if listing_url:
             logger.info("Visiting listing page first: %s", listing_url)
@@ -346,6 +349,8 @@ class WineListDownloader:
         Contents" view that shows only section headings.  Clicking the
         "Wine List" tab switches to a full, scrollable list of all wines.
         """
+        if not self.page:
+            return
         for selector in self._WINE_LIST_TAB_SELECTORS:
             try:
                 loc = self.page.locator(selector).first
@@ -357,13 +362,14 @@ class WineListDownloader:
             except Exception:
                 continue
     
-    def _compute_hash(self, content: bytes) -> str:
+    @staticmethod
+    def _compute_hash(content: bytes) -> str:
         """
         Compute SHA-256 hash of content.
-        
+
         Args:
             content: File content as bytes
-        
+
         Returns:
             Hexadecimal hash string
         """

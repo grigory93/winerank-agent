@@ -4,12 +4,13 @@ import time
 from datetime import datetime, timezone
 from typing import TypedDict, Optional, List
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres import PostgresSaver
 from playwright.sync_api import sync_playwright, Browser, Page
 
 from winerank.config import get_settings
-from winerank.common.db import get_session
+from winerank.common.db import get_session, resolve_restaurant_by_id_or_name
 from winerank.common.models import (
     Restaurant,
     WineList,
@@ -254,28 +255,8 @@ def init_job_node(state: CrawlerState) -> dict:
 
 
 def _resolve_restaurant_filter(filter_value: str) -> Optional[Restaurant]:
-    """Look up a restaurant by ID (if numeric) or name (case-insensitive).
-
-    Returns the SQLAlchemy Restaurant object, or None if not found.
-    """
-    with get_session() as session:
-        if filter_value.isdigit():
-            return session.query(Restaurant).filter_by(
-                id=int(filter_value)
-            ).first()
-
-        # Case-insensitive exact match first
-        rec = session.query(Restaurant).filter(
-            Restaurant.name.ilike(filter_value)
-        ).first()
-        if rec:
-            return rec
-
-        # Partial match as fallback
-        rec = session.query(Restaurant).filter(
-            Restaurant.name.ilike(f"%{filter_value}%")
-        ).first()
-        return rec
+    """Look up a restaurant by ID (if numeric) or name (case-insensitive)."""
+    return resolve_restaurant_by_id_or_name(filter_value)
 
 
 def fetch_listing_page_node(state: CrawlerState) -> dict:
@@ -592,7 +573,9 @@ def download_wine_list_node(state: CrawlerState) -> dict:
 def extract_text_node(state: CrawlerState) -> dict:
     """Extract structured text from the downloaded wine list."""
     restaurant = state.get("current_restaurant")
-    path = restaurant.get("local_file_path") if restaurant else None
+    if not restaurant:
+        return {}
+    path = restaurant.get("local_file_path")
     if not path:
         return {}
 
@@ -607,7 +590,7 @@ def extract_text_node(state: CrawlerState) -> dict:
                 if wl:
                     wl.text_file_path = text_path
 
-        merged = dict(restaurant) if restaurant else {}
+        merged = dict(restaurant)
         merged["text_file_path"] = text_path
         return {"current_restaurant": merged}
 
@@ -684,10 +667,11 @@ def complete_job_node(state: CrawlerState) -> dict:
         job = session.query(Job).filter_by(id=state["job_id"]).first()
         if job:
             job.status = JobStatus.COMPLETED
-            job.completed_at = datetime.now(timezone.utc)
-            if job.started_at and job.completed_at:
+            completed_at = datetime.now(timezone.utc)
+            job.completed_at = completed_at
+            if job.started_at is not None:
                 job.duration_seconds = (
-                    job.completed_at - job.started_at
+                    completed_at - job.started_at
                 ).total_seconds()
             errors = state.get("errors")
             if errors:
@@ -720,11 +704,12 @@ def fail_job(job_id: int, error_msg: str) -> None:
             job = session.query(Job).filter_by(id=job_id).first()
             if job and job.status == JobStatus.RUNNING:
                 job.status = JobStatus.FAILED
-                job.completed_at = datetime.now(timezone.utc)
+                completed_at = datetime.now(timezone.utc)
+                job.completed_at = completed_at
                 job.error_message = error_msg[:2000]
-                if job.started_at and job.completed_at:
+                if job.started_at is not None:
                     job.duration_seconds = (
-                        job.completed_at - job.started_at
+                        completed_at - job.started_at
                     ).total_seconds()
     except Exception:
         logger.exception("Could not mark job %d as failed", job_id)
@@ -793,7 +778,7 @@ def run_crawler(
                 }
 
             thread_id = f"crawler_{resume_job_id or 'new'}_{datetime.now(timezone.utc).isoformat()}"
-            config = {"configurable": {"thread_id": thread_id}}
+            config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
             final = None
             for output in app.stream(initial_state, config):

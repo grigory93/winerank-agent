@@ -4,7 +4,7 @@ import re
 from typing import Optional
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 
 from winerank.config import get_settings
@@ -90,17 +90,17 @@ class MichelinScraper:
             # Find the main results container (not promotional/nearby sections)
             # The actual filtered results are in js-restaurant__list_items
             results_container = soup.find("div", class_="js-restaurant__list_items")
-            
+
             restaurant_urls: list[str] = []
-            
-            if not results_container:
+
+            if not results_container or not isinstance(results_container, Tag):
                 logger.warning("Could not find main results container on %s", url)
                 return {
                     "restaurant_urls": [],
                     "total_restaurants": 0,
                     "total_pages": 0,
                 }
-            
+
             # Extract restaurant cards from the main results container only
             cards = results_container.find_all("div", class_="js-restaurant__list_item")
             
