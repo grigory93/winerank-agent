@@ -350,7 +350,16 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
     # --- Normal Michelin listing mode ---
     page = _get_page()
     scraper = MichelinScraper(page)
+    
+    # Determine which page to fetch
+    urls_so_far = state.get("restaurant_urls") or []
+    idx_so_far = state.get("current_restaurant_idx", 0)
     cur_page = state["current_page"]
+    
+    # If we finished all restaurants on the current page and routed here for "next page",
+    # advance to the next page number (since we don't update current_page in success path).
+    if len(urls_so_far) > 0 and idx_so_far >= len(urls_so_far):
+        cur_page = cur_page + 1
 
     try:
         url = scraper.get_listing_url(state["michelin_level"], cur_page)
@@ -358,6 +367,7 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
         result = scraper.scrape_listing_page(url)
 
         updates: dict = {
+            "current_page": cur_page,  # Persist the page we actually fetched
             "restaurant_urls": result["restaurant_urls"],
             "current_restaurant_idx": 0,
             "restaurants_found": state["restaurants_found"]

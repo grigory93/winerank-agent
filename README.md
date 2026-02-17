@@ -87,6 +87,10 @@ Crawl 3-star Michelin restaurants (default):
 ```bash
 uv run winerank crawl
 ```
+or with sending to a log file:
+```bash
+uv run winerank crawl 2>&1 | tee crawl.log
+```
 
 Crawl specific Michelin levels:
 ```bash
