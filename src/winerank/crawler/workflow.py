@@ -2,7 +2,7 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TypedDict, Optional, List
+from typing import Any, TypedDict, Optional, List, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Shared browser context – managed by run_crawler(), used by every node
 # ---------------------------------------------------------------------------
+_playwright_instance: Optional[object] = None  # Playwright from sync_playwright()
+_browser: Optional[Browser] = None
 _browser_page: Optional[Page] = None
 
 
@@ -38,6 +40,43 @@ def _get_page() -> Page:
     if _browser_page is None:
         raise RuntimeError("Browser page not initialised – call run_crawler()")
     return _browser_page
+
+
+def _recover_browser() -> None:
+    """Restart the entire Chromium browser after a crash.
+
+    Closes the old browser (which may be in a broken state) and launches
+    a fresh one from the existing Playwright instance.  All three
+    module-level refs are updated.
+    """
+    global _browser_page, _browser
+
+    if not _playwright_instance:
+        logger.error("No Playwright instance available -- cannot recover browser")
+        return
+
+    settings = get_settings()
+
+    # 1. Tear down the old browser gracefully
+    for label, closeable in [("page", _browser_page), ("browser", _browser)]:
+        try:
+            if closeable:
+                closeable.close()
+        except Exception:
+            logger.info("Ignoring error closing %s during recovery", label)
+
+    # 2. Launch a brand-new browser + page
+    try:
+        logger.info("Restarting Chromium browser (headless=%s) ...", settings.headless)
+        pw = cast(Any, _playwright_instance)
+        new_browser = pw.chromium.launch(headless=settings.headless)
+        _browser = new_browser
+        _browser_page = new_browser.new_page()
+        logger.info("Browser restarted successfully")
+    except Exception as exc:
+        logger.error("Browser restart failed: %s", exc)
+        _browser = None
+        _browser_page = None
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +113,10 @@ class CrawlerState(TypedDict):
     wine_lists_downloaded: int
     wine_list_restaurant_names: List[str]  # names of restaurants with lists downloaded this run
     errors: List[str]
+
+    # Circuit breaker: consecutive failures on current listing page
+    consecutive_fetch_failures: int
+    max_consecutive_failures: int
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +227,16 @@ def _route_after_save(state: CrawlerState) -> str:
     idx = state["current_restaurant_idx"]
     total = len(state["restaurant_urls"])
 
+    # Circuit-breaker path: page was skipped due to repeated failures
+    failures = state.get("consecutive_fetch_failures", 0)
+    max_failures = state.get("max_consecutive_failures", 3)
+    if failures >= max_failures and total == 0:
+        # current_page was already advanced when breaker tripped
+        if state["total_pages"] > 0 and state["current_page"] <= state["total_pages"]:
+            logger.info("Advancing past failed page to page %d", state["current_page"])
+            return "next_page"
+        return "done"
+
     if idx < total:
         return "next_restaurant"
 
@@ -251,6 +304,8 @@ def init_job_node(state: CrawlerState) -> dict:
             "wine_lists_downloaded": 0,
             "wine_list_restaurant_names": [],
             "errors": [],
+            "consecutive_fetch_failures": 0,
+            "max_consecutive_failures": 3,
         }
 
 
@@ -307,6 +362,7 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
             "current_restaurant_idx": 0,
             "restaurants_found": state["restaurants_found"]
                                 + len(result["restaurant_urls"]),
+            "consecutive_fetch_failures": 0,
         }
 
         if cur_page == 1:
@@ -330,7 +386,41 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
 
     except Exception as e:
         logger.error("Error fetching listing page %d: %s", cur_page, e)
-        return {"errors": state.get("errors", []) + [str(e)]}
+
+        max_failures = state.get("max_consecutive_failures", 3)
+        base = state.get("consecutive_fetch_failures", 0)
+        # After a circuit-breaker skip we have base >= max_failures; treat as new page
+        if base >= max_failures:
+            base = 0
+        failures = base + 1
+
+        error_msg = f"Page {cur_page} attempt {failures}: {e}"
+        errors = state.get("errors", []) + [error_msg]
+
+        # Attempt browser recovery on crash-class errors
+        error_str = str(e)
+        if "Page crashed" in error_str or "Page closed" in error_str:
+            logger.info("Browser crash detected on attempt %d -- recovering browser", failures)
+            _recover_browser()
+
+        if failures >= max_failures:
+            logger.error(
+                "Circuit breaker tripped: %d consecutive failures on page %d -- skipping",
+                max_failures, cur_page,
+            )
+            # Keep consecutive_fetch_failures so _route_after_save can detect skip; advance page
+            return {
+                "consecutive_fetch_failures": failures,
+                "errors": errors,
+                "restaurant_urls": [],
+                "current_restaurant_idx": 0,
+                "current_page": cur_page + 1,
+            }
+
+        return {
+            "consecutive_fetch_failures": failures,
+            "errors": errors,
+        }
 
 
 def _load_restaurant_from_db(restaurant_id: int) -> Optional[dict]:
@@ -737,7 +827,7 @@ def run_crawler(
         (numeric string) or a name (case-insensitive match).  Michelin
         listing scrape is bypassed entirely.
     """
-    global _browser_page
+    global _browser_page, _browser, _playwright_instance
     settings = get_settings()
     job_id: Optional[int] = None
 
@@ -758,7 +848,9 @@ def run_crawler(
 
         # Launch ONE browser for the whole run
         logger.info("Launching browser (headless=%s) …", settings.headless)
+        _playwright_instance = pw
         browser = pw.chromium.launch(headless=settings.headless)
+        _browser = browser
         _browser_page = browser.new_page()
 
         try:
@@ -799,4 +891,6 @@ def run_crawler(
 
         finally:
             _browser_page = None
+            _browser = None
+            _playwright_instance = None
             browser.close()

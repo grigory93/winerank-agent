@@ -78,6 +78,9 @@ class MichelinScraper:
     def scrape_listing_page(self, url: str) -> dict:
         """Return ``{restaurant_urls, total_restaurants, total_pages}``."""
         try:
+            logger.info("Navigating to %s (timeout=%dms)", url, self.settings.browser_timeout)
+            logger.info("Browser page state: closed=%s", self.page.is_closed())
+
             self.page.goto(url, timeout=self.settings.browser_timeout)
             self.page.wait_for_load_state("domcontentloaded")
             
@@ -139,6 +142,11 @@ class MichelinScraper:
         except PlaywrightTimeout:
             raise Exception(f"Timeout loading listing page {url}")
         except Exception as e:
+            page_closed = self.page.is_closed() if hasattr(self.page, "is_closed") else "unknown"
+            logger.error(
+                "Scraping error: type=%s page_closed=%s url=%s detail=%s",
+                type(e).__name__, page_closed, url, e,
+            )
             raise Exception(f"Error scraping listing page {url}: {e}")
 
     # -----------------------------------------------------------------

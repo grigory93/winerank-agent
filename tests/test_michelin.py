@@ -143,3 +143,45 @@ class TestGetListingUrl:
     def test_page_one_no_suffix(self, scraper):
         url = scraper.get_listing_url("3", page_num=1)
         assert "/page/" not in url
+
+
+# ------------------------------------------------------------------
+# scrape_listing_page – error handling and diagnostics
+# ------------------------------------------------------------------
+
+class TestScrapeListingPageErrors:
+
+    def test_scrape_listing_page_reraises_with_url_in_message(self):
+        """When page.goto fails, scrape_listing_page re-raises with URL in the message."""
+        from unittest.mock import MagicMock
+
+        mock_page = MagicMock()
+        mock_page.goto.side_effect = Exception("Page.goto: Page crashed")
+        mock_page.is_closed.return_value = True
+
+        scraper = MichelinScraper(mock_page)
+        url = "https://guide.michelin.com/us/en/selection/united-states/restaurants/1-star-michelin"
+
+        with pytest.raises(Exception) as exc_info:
+            scraper.scrape_listing_page(url)
+
+        assert url in str(exc_info.value)
+        assert "Error scraping listing page" in str(exc_info.value)
+
+    def test_scrape_listing_page_timeout_reraises_with_url(self):
+        """PlaywrightTimeout is re-raised as Exception with URL in message."""
+        from unittest.mock import MagicMock
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = MagicMock()
+        mock_page.goto.side_effect = PlaywrightTimeout("Timeout 30000ms exceeded")
+        mock_page.is_closed.return_value = False
+
+        scraper = MichelinScraper(mock_page)
+        url = "https://guide.michelin.com/us/en/selection/restaurants/1-star-michelin"
+
+        with pytest.raises(Exception) as exc_info:
+            scraper.scrape_listing_page(url)
+
+        assert url in str(exc_info.value)
+        assert "Timeout" in str(exc_info.value)

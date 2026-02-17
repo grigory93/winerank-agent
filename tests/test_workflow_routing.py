@@ -153,3 +153,61 @@ class TestRouteAfterSave:
             "total_pages": 3,
         }
         assert _route_after_save(state) == "done"
+
+    def test_circuit_breaker_skip_advances_to_next_page(self):
+        """When circuit breaker tripped, current_page already advanced; route to next_page."""
+        state = {
+            "current_restaurant_idx": 0,
+            "restaurant_urls": [],
+            "current_page": 2,  # already advanced past failed page 1
+            "total_pages": 5,
+            "consecutive_fetch_failures": 3,
+            "max_consecutive_failures": 3,
+        }
+        assert _route_after_save(state) == "next_page"
+
+    def test_circuit_breaker_skip_last_page_done(self):
+        """When circuit breaker tripped on last page, current_page past total_pages -> done."""
+        state = {
+            "current_restaurant_idx": 0,
+            "restaurant_urls": [],
+            "current_page": 6,  # advanced past failed page 5
+            "total_pages": 5,
+            "consecutive_fetch_failures": 3,
+            "max_consecutive_failures": 3,
+        }
+        assert _route_after_save(state) == "done"
+
+    def test_circuit_breaker_path_not_taken_when_failures_below_threshold(self):
+        """When total==0 but failures < max, use normal path (next_page = current_page + 1)."""
+        state = {
+            "current_restaurant_idx": 1,
+            "restaurant_urls": [],
+            "current_page": 1,
+            "total_pages": 3,
+            "consecutive_fetch_failures": 2,
+            "max_consecutive_failures": 3,
+        }
+        assert _route_after_save(state) == "next_page"
+
+    def test_circuit_breaker_zero_total_pages_returns_done(self):
+        """When circuit breaker tripped and total_pages is 0, return done."""
+        state = {
+            "current_restaurant_idx": 0,
+            "restaurant_urls": [],
+            "current_page": 1,
+            "total_pages": 0,
+            "consecutive_fetch_failures": 3,
+            "max_consecutive_failures": 3,
+        }
+        assert _route_after_save(state) == "done"
+
+    def test_route_after_save_uses_default_failure_counters(self):
+        """Missing consecutive_fetch_failures / max_consecutive_failures default to 0 and 3."""
+        state = {
+            "current_restaurant_idx": 3,
+            "restaurant_urls": ["a", "b", "c"],
+            "current_page": 1,
+            "total_pages": 2,
+        }
+        assert _route_after_save(state) == "next_page"
