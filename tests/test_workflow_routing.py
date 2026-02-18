@@ -7,12 +7,39 @@ import pytest
 
 from winerank.common.models import CrawlStatus
 from winerank.crawler.workflow import (
+    _country_to_language_hint,
     _route_after_process,
     _route_after_crawl,
     _route_after_download,
     _route_after_binwise,
     _route_after_save,
 )
+
+
+# ------------------------------------------------------------------
+# _country_to_language_hint
+# ------------------------------------------------------------------
+
+class TestCountryToLanguageHint:
+
+    def test_france_returns_fr(self):
+        assert _country_to_language_hint("France") == "fr"
+        assert _country_to_language_hint("france") == "fr"
+
+    def test_spain_and_mexico_return_es(self):
+        assert _country_to_language_hint("Spain") == "es"
+        assert _country_to_language_hint("Mexico") == "es"
+        assert _country_to_language_hint("spain") == "es"
+        assert _country_to_language_hint("mexico") == "es"
+
+    def test_usa_and_others_return_en(self):
+        assert _country_to_language_hint("USA") == "en"
+        assert _country_to_language_hint("Canada") == "en"
+        assert _country_to_language_hint("Denmark") == "en"
+
+    def test_none_or_empty_returns_en(self):
+        assert _country_to_language_hint(None) == "en"
+        assert _country_to_language_hint("") == "en"
 
 
 # ------------------------------------------------------------------

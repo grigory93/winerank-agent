@@ -636,6 +636,18 @@ def process_restaurant_node(state: CrawlerState) -> dict:
         }
 
 
+def _country_to_language_hint(country: Optional[str]) -> str:
+    """Map restaurant country to language hint for wine list discovery (fr/es/en)."""
+    if not country:
+        return "en"
+    c = str(country).strip().lower()
+    if c == "france":
+        return "fr"
+    if c in ("spain", "mexico"):
+        return "es"
+    return "en"
+
+
 def crawl_restaurant_site_node(state: CrawlerState) -> dict:
     """Navigate a restaurant website to locate its wine list."""
     restaurant = state["current_restaurant"]
@@ -644,6 +656,7 @@ def crawl_restaurant_site_node(state: CrawlerState) -> dict:
 
     page = _get_page()
     finder = RestaurantWineListFinder(page)
+    language_hint = _country_to_language_hint(restaurant.get("country"))
 
     # Start timing
     start_time = time.time()
@@ -663,6 +676,7 @@ def crawl_restaurant_site_node(state: CrawlerState) -> dict:
         wine_list_url = finder.find_wine_list(
             restaurant["website_url"],
             cached_wine_list_url=cached_url,
+            language_hint=language_hint,
         )
 
         # Calculate crawl duration

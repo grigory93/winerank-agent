@@ -1,10 +1,20 @@
 """Reports page - summary metrics and dashboards."""
 import streamlit as st
+import plotly.graph_objects as go
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from winerank.common.db import get_session
-from winerank.common.models import Restaurant, SiteOfRecord, WineList, Wine, Job, CrawlStatus, JobStatus
+from winerank.common.models import (
+    Restaurant,
+    SiteOfRecord,
+    WineList,
+    Wine,
+    Job,
+    CrawlStatus,
+    JobStatus,
+    MichelinDistinction,
+)
 
 
 def render():
@@ -37,6 +47,120 @@ def render():
 
         total_wines = session.query(func.count(Wine.id)).scalar()
         col5.metric("Total Wines", total_wines)
+
+        # ── Heatmap: restaurants by country and distinction ─────────
+        st.markdown("---")
+        st.subheader("Restaurants by Country and Michelin Distinction")
+
+        _HEATMAP_DISTINCTIONS = [
+            MichelinDistinction.THREE_STARS,
+            MichelinDistinction.TWO_STARS,
+            MichelinDistinction.ONE_STAR,
+            MichelinDistinction.BIB_GOURMAND,
+        ]
+        heatmap_counts = (
+            session.query(
+                Restaurant.country,
+                Restaurant.michelin_distinction,
+                func.count(Restaurant.id).label("count"),
+            )
+            .filter(Restaurant.michelin_distinction.in_(_HEATMAP_DISTINCTIONS))
+            .group_by(Restaurant.country, Restaurant.michelin_distinction)
+            .all()
+        )
+
+        if heatmap_counts:
+            # Distinct sorted countries and fixed distinction order (Y: top = 3★, bottom = Bib)
+            distinction_labels = ["3 Stars", "2 Stars", "1 Star", "Bib Gourmand"]
+            countries = sorted({row.country for row in heatmap_counts})
+            count_by_key = {(row.country, row.michelin_distinction): row.count for row in heatmap_counts}
+
+            # Build matrix: rows = distinction (3★..Bib), cols = country
+            z_matrix = []
+            for distinction in _HEATMAP_DISTINCTIONS:
+                z_matrix.append(
+                    [
+                        count_by_key.get((country, distinction), 0)
+                        for country in countries
+                    ]
+                )
+
+            fig = go.Figure(
+                data=go.Heatmap(
+                    z=z_matrix,
+                    x=countries,
+                    y=distinction_labels,
+                    colorscale="YlOrRd",
+                    text=[[str(c) for c in row] for row in z_matrix],
+                    texttemplate="%{text}",
+                    textfont={"size": 12},
+                    hoverongaps=False,
+                )
+            )
+            fig.update_layout(
+                xaxis_title="Country (Michelin site)",
+                yaxis_title="Michelin designation",
+                xaxis={"side": "bottom"},
+                yaxis={"autorange": "reversed"},
+                height=320,
+                margin=dict(t=40, b=50, l=120, r=30),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No restaurant data for Bib Gourmand / 1–3 stars yet")
+
+        # ── Heatmap: downloaded wine lists by country and distinction ─
+        st.subheader("Downloaded Wine Lists by Country and Michelin Distinction")
+
+        wine_list_heatmap = (
+            session.query(
+                Restaurant.country,
+                Restaurant.michelin_distinction,
+                func.count(WineList.id).label("count"),
+            )
+            .join(WineList, WineList.restaurant_id == Restaurant.id)
+            .filter(Restaurant.michelin_distinction.in_(_HEATMAP_DISTINCTIONS))
+            .group_by(Restaurant.country, Restaurant.michelin_distinction)
+            .all()
+        )
+
+        if wine_list_heatmap:
+            distinction_labels_wl = ["3 Stars", "2 Stars", "1 Star", "Bib Gourmand"]
+            countries_wl = sorted({row.country for row in wine_list_heatmap})
+            count_by_key_wl = {(row.country, row.michelin_distinction): row.count for row in wine_list_heatmap}
+
+            z_matrix_wl = []
+            for distinction in _HEATMAP_DISTINCTIONS:
+                z_matrix_wl.append(
+                    [
+                        count_by_key_wl.get((country, distinction), 0)
+                        for country in countries_wl
+                    ]
+                )
+
+            fig_wl = go.Figure(
+                data=go.Heatmap(
+                    z=z_matrix_wl,
+                    x=countries_wl,
+                    y=distinction_labels_wl,
+                    colorscale="YlOrRd",
+                    text=[[str(c) for c in row] for row in z_matrix_wl],
+                    texttemplate="%{text}",
+                    textfont={"size": 12},
+                    hoverongaps=False,
+                )
+            )
+            fig_wl.update_layout(
+                xaxis_title="Country (Michelin site)",
+                yaxis_title="Michelin designation",
+                xaxis={"side": "bottom"},
+                yaxis={"autorange": "reversed"},
+                height=320,
+                margin=dict(t=40, b=50, l=120, r=30),
+            )
+            st.plotly_chart(fig_wl, use_container_width=True)
+        else:
+            st.info("No downloaded wine lists for Bib Gourmand / 1–3 stars yet")
 
         # ── Crawl coverage ─────────────────────────────────────────
         st.markdown("---")

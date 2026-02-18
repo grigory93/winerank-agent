@@ -92,3 +92,25 @@ class TestIsSpaShell:
     def test_short_html_not_spa(self, downloader):
         html = "<html><body><p>Hello</p></body></html>"
         assert downloader._is_spa_shell(html) is False
+
+
+# ------------------------------------------------------------------
+# _WINE_LIST_TAB_SELECTORS – include French and Spanish labels
+# ------------------------------------------------------------------
+
+class TestWineListTabSelectors:
+
+    def test_english_selectors_present(self, downloader):
+        selectors = downloader._WINE_LIST_TAB_SELECTORS
+        assert 'text="Wine List"' in selectors
+        assert 'text="WINE LIST"' in selectors
+
+    def test_french_selectors_present(self, downloader):
+        selectors = downloader._WINE_LIST_TAB_SELECTORS
+        assert 'text="Carte des vins"' in selectors
+        assert 'text="Vins"' in selectors
+
+    def test_spanish_selectors_present(self, downloader):
+        selectors = downloader._WINE_LIST_TAB_SELECTORS
+        assert 'text="Carta de vinos"' in selectors
+        assert 'text="Vinos"' in selectors

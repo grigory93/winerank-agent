@@ -202,6 +202,209 @@ class TestScoreWineKeywordsOnly:
 
 
 # ------------------------------------------------------------------
+# _normalize_text (accent normalization)
+# ------------------------------------------------------------------
+
+class TestNormalizeText:
+
+    def test_lowercase(self):
+        assert RestaurantWineListFinder._normalize_text("Wine List") == "wine list"
+
+    def test_strips_accents(self):
+        assert RestaurantWineListFinder._normalize_text("café") == "cafe"
+        assert RestaurantWineListFinder._normalize_text("dégustation") == "degustation"
+
+    def test_empty(self):
+        assert RestaurantWineListFinder._normalize_text("") == ""
+        assert RestaurantWineListFinder._normalize_text("   ") == ""
+
+
+# ------------------------------------------------------------------
+# French (fr) keyword scoring – effective lists merged when language_hint is fr
+# ------------------------------------------------------------------
+
+class TestFrenchKeywordScoring:
+
+    def test_french_wine_link_scores_when_effective_lists_include_fr(self, finder):
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_FR
+        finder._effective_menu_keywords = finder.MENU_KEYWORDS + finder.MENU_KEYWORDS_FR
+        finder._effective_informational_keywords = finder.INFORMATIONAL_KEYWORDS + finder.INFORMATIONAL_KEYWORDS_FR
+        finder._effective_context_phrases = finder._CONTEXT_PHRASES + finder._CONTEXT_PHRASES_FR
+        finder._effective_pdf_wine_terms = finder._PDF_WINE_TERMS + finder._PDF_WINE_TERMS_FR
+        finder._build_norm_lists()
+
+        score = finder._score_link("carte des vins", "/carte-des-vins", "")
+        assert score > 50, "French 'carte des vins' link should score when FR keywords are active"
+
+    def test_french_context_phrase_boosts_generic_link(self, finder):
+        finder._effective_context_phrases = finder._CONTEXT_PHRASES + finder._CONTEXT_PHRASES_FR
+        finder._build_norm_lists()
+        # Generic link "ici" with French context mentioning wine list
+        base = finder._score_link("ici", "/here", "")
+        boosted = finder._score_link(
+            "ici", "/here",
+            "La carte des vins est disponible ici.",
+        )
+        assert boosted > base, "French context phrase should boost score for generic link"
+
+    def test_french_wine_keywords_only_scores(self, finder):
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_FR
+        finder._build_norm_lists()
+        score = finder._score_wine_keywords_only("carte des vins", "/carte-des-vins")
+        assert score > 0
+
+
+# ------------------------------------------------------------------
+# Spanish (es) keyword scoring
+# ------------------------------------------------------------------
+
+class TestSpanishKeywordScoring:
+
+    def test_spanish_wine_link_scores_when_effective_lists_include_es(self, finder):
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_ES
+        finder._effective_menu_keywords = finder.MENU_KEYWORDS + finder.MENU_KEYWORDS_ES
+        finder._effective_informational_keywords = finder.INFORMATIONAL_KEYWORDS + finder.INFORMATIONAL_KEYWORDS_ES
+        finder._effective_context_phrases = finder._CONTEXT_PHRASES + finder._CONTEXT_PHRASES_ES
+        finder._effective_pdf_wine_terms = finder._PDF_WINE_TERMS + finder._PDF_WINE_TERMS_ES
+        finder._build_norm_lists()
+
+        score = finder._score_link("carta de vinos", "/carta-de-vinos", "")
+        assert score > 50, "Spanish 'carta de vinos' link should score when ES keywords are active"
+
+    def test_spanish_lista_vinos_scores(self, finder):
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_ES
+        finder._build_norm_lists()
+        score = finder._score_wine_keywords_only("lista de vinos", "/lista-de-vinos")
+        assert score > 0
+
+
+# ------------------------------------------------------------------
+# _build_norm_lists – output correctness
+# ------------------------------------------------------------------
+
+class TestBuildNormLists:
+
+    def test_norm_lists_populated_on_init(self, finder):
+        """A freshly created finder must have _norm_wine_keywords ready."""
+        assert len(finder._norm_wine_keywords) == len(finder.WINE_KEYWORDS)
+        # All entries must be lowercase and accent-free
+        assert all(kw == kw.lower() for kw in finder._norm_wine_keywords)
+
+    def test_norm_lists_updated_after_build(self, finder):
+        """After switching to FR, _norm_wine_keywords reflects the merged list."""
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_FR
+        finder._build_norm_lists()
+        assert len(finder._norm_wine_keywords) == len(finder.WINE_KEYWORDS) + len(finder.WINE_KEYWORDS_FR)
+        # French keyword 'carte des vins' must appear in normalized form
+        assert "carte des vins" in finder._norm_wine_keywords
+
+    def test_accented_keywords_normalized_in_norm_lists(self, finder):
+        """Accented FR/ES keywords are stored without accents in norm lists."""
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_FR
+        finder._effective_menu_keywords = finder.MENU_KEYWORDS + finder.MENU_KEYWORDS_FR
+        finder._build_norm_lists()
+        # "dégustation" from MENU_KEYWORDS_FR must appear as "degustation"
+        assert "degustation" in finder._norm_menu_keywords
+
+
+# ------------------------------------------------------------------
+# find_wine_list – effective-list setup via language_hint (no browser needed)
+# ------------------------------------------------------------------
+
+class TestFindWineListEffectiveLists:
+
+    def test_fr_hint_merges_french_keywords(self):
+        """find_wine_list(language_hint='fr') loads FR+EN keywords."""
+        mock_page = MagicMock()
+        # Make page.content() return empty HTML so _smart_search returns None quickly
+        mock_page.content.return_value = "<html><body></body></html>"
+        mock_page.goto.return_value = MagicMock(ok=True)
+        finder = RestaurantWineListFinder(mock_page)
+        finder.find_wine_list("https://example.com", language_hint="fr")
+        assert "carte des vins" in finder._effective_wine_keywords
+        assert "wine list" in finder._effective_wine_keywords  # English still present
+
+    def test_es_hint_merges_spanish_keywords(self):
+        """find_wine_list(language_hint='es') loads ES+EN keywords."""
+        mock_page = MagicMock()
+        mock_page.content.return_value = "<html><body></body></html>"
+        mock_page.goto.return_value = MagicMock(ok=True)
+        finder = RestaurantWineListFinder(mock_page)
+        finder.find_wine_list("https://example.com", language_hint="es")
+        assert "carta de vinos" in finder._effective_wine_keywords
+        assert "wine list" in finder._effective_wine_keywords
+
+    def test_no_hint_uses_english_only(self):
+        """find_wine_list without language_hint uses only English keywords."""
+        mock_page = MagicMock()
+        mock_page.content.return_value = "<html><body></body></html>"
+        mock_page.goto.return_value = MagicMock(ok=True)
+        finder = RestaurantWineListFinder(mock_page)
+        finder.find_wine_list("https://example.com")
+        assert "carte des vins" not in finder._effective_wine_keywords
+        assert "carta de vinos" not in finder._effective_wine_keywords
+
+
+# ------------------------------------------------------------------
+# _score_pdf with French / Spanish PDF wine terms
+# ------------------------------------------------------------------
+
+class TestScorePdfMultilingual:
+
+    def _tag_with_text(self, text: str):
+        """Return a minimal BeautifulSoup <a> tag with the given text."""
+        from bs4 import BeautifulSoup
+        html = f"<a href='/doc'>{text}</a>"
+        return BeautifulSoup(html, "html.parser").find("a")
+
+    def test_french_pdf_term_in_url_scores(self, finder):
+        finder._effective_pdf_wine_terms = finder._PDF_WINE_TERMS + finder._PDF_WINE_TERMS_FR
+        finder._build_norm_lists()
+        tag = self._tag_with_text("Download")
+        score = finder._score_pdf("https://restaurant.fr/carte-des-vins.pdf", tag)
+        assert score > 0, "PDF URL containing 'carte' should score with FR terms active"
+
+    def test_spanish_pdf_term_in_url_scores(self, finder):
+        finder._effective_pdf_wine_terms = finder._PDF_WINE_TERMS + finder._PDF_WINE_TERMS_ES
+        finder._build_norm_lists()
+        tag = self._tag_with_text("Download")
+        score = finder._score_pdf("https://restaurant.es/bodega-vinos.pdf", tag)
+        assert score > 0, "PDF URL containing 'bodega' should score with ES terms active"
+
+
+# ------------------------------------------------------------------
+# Accent normalization in full scoring pipeline
+# ------------------------------------------------------------------
+
+class TestAccentNormalizationInScoring:
+
+    def test_accented_link_text_matches_fr_keyword(self, finder):
+        """Link text 'Dégustation' should match the French keyword 'degustation'."""
+        finder._effective_menu_keywords = finder.MENU_KEYWORDS + finder.MENU_KEYWORDS_FR
+        finder._build_norm_lists()
+        score = finder._score_link("Dégustation", "/degustation", "")
+        assert score > 0, "Accented link text should match normalized French keyword"
+
+    def test_accented_href_matches_fr_keyword(self, finder):
+        """Href slug 'carte-des-vins' derived from an accented keyword should match."""
+        finder._effective_wine_keywords = finder.WINE_KEYWORDS + finder.WINE_KEYWORDS_FR
+        finder._build_norm_lists()
+        score = finder._score_link("Voir la carte", "/carte-des-vins", "")
+        assert score > 0, "Href 'carte-des-vins' should match normalized French wine keyword"
+
+
+# ------------------------------------------------------------------
+# English-only behavior unchanged when language_hint is en / None
+# ------------------------------------------------------------------
+
+class TestEnglishOnlyUnchanged:
+
+    def test_wine_list_still_scores_high_with_default_lists(self, finder):
+        score = finder._score_link("wine list", "/wine-list", "")
+        assert score > 100
+
+
+# ------------------------------------------------------------------
 # Metrics tracking
 # ------------------------------------------------------------------
 

@@ -16,6 +16,7 @@ dependencies = [
     # DB Manager
     "streamlit>=1.38",
     "pandas>=2.0",
+    "plotly>=5.0",
     # Crawler
     "langgraph>=0.2",
     "langgraph-checkpoint-postgres>=2.0",

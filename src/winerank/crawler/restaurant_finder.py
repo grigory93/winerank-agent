@@ -16,6 +16,7 @@ Somni, and The Inn at Little Washington.
 import json
 import logging
 import re
+import unicodedata
 from typing import Optional, Set
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -188,12 +189,84 @@ class RestaurantWineListFinder:
         "spirits", "cocktail", "by-the-glass", "btg",
     ]
 
+    # ------------------------------------------------------------------
+    # French (fr) keyword and phrase lists – merged when language_hint is "fr"
+    # ------------------------------------------------------------------
+    WINE_KEYWORDS_FR: list[str] = [
+        "carte des vins", "liste des vins", "vins", "cave", "sommelier",
+        "boissons", "menu des vins", "carte des boissons", "cocktails",
+        "spiritueux", "vin", "carte du vin",
+    ]
+    MENU_KEYWORDS_FR: list[str] = [
+        "menus", "menu", "notre carte", "dégustation", "à propos", "nous",
+        "faq", "informations", "la carte", "restaurant", "dining",
+    ]
+    INFORMATIONAL_KEYWORDS_FR: list[str] = [
+        "à propos", "nous", "informations", "visite", "histoire", "philosophie",
+    ]
+    _CONTEXT_PHRASES_FR: list[str] = [
+        "carte des vins", "liste des vins", "disponible", "télécharger",
+        "voir notre", "version actuelle", "voir la carte",
+    ]
+    _PDF_WINE_TERMS_FR: list[str] = [
+        "vin", "vins", "cave", "boissons", "sommelier", "carte",
+    ]
+
+    # ------------------------------------------------------------------
+    # Spanish (es) keyword and phrase lists – merged when language_hint is "es"
+    # ------------------------------------------------------------------
+    WINE_KEYWORDS_ES: list[str] = [
+        "carta de vinos", "lista de vinos", "vinos", "bodega", "sommelier",
+        "bebidas", "carta de bebidas", "menu de vinos", "cocktails",
+        "licores", "vino",
+    ]
+    MENU_KEYWORDS_ES: list[str] = [
+        "menús", "menú", "nuestra carta", "degustación", "sobre nosotros",
+        "faq", "información", "la carta", "restaurante", "comer",
+    ]
+    INFORMATIONAL_KEYWORDS_ES: list[str] = [
+        "sobre nosotros", "nosotros", "información", "visita", "historia", "filosofía",
+    ]
+    _CONTEXT_PHRASES_ES: list[str] = [
+        "carta de vinos", "lista de vinos", "disponible", "descargar",
+        "ver nuestra", "versión actual", "ver la carta",
+    ]
+    _PDF_WINE_TERMS_ES: list[str] = [
+        "vino", "vinos", "bodega", "bebidas", "sommelier", "carta",
+    ]
+
+    @staticmethod
+    def _normalize_text(s: str) -> str:
+        """Lowercase and normalize accents for consistent keyword matching."""
+        if not s:
+            return ""
+        s = s.lower().strip()
+        nfd = unicodedata.normalize("NFD", s)
+        return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+    def _build_norm_lists(self) -> None:
+        """Pre-normalize all effective keyword lists for use in scoring hot paths."""
+        n = self._normalize_text
+        self._norm_wine_keywords:   list[str] = [n(kw) for kw in self._effective_wine_keywords]
+        self._norm_menu_keywords:   list[str] = [n(kw) for kw in self._effective_menu_keywords]
+        self._norm_info_keywords:   list[str] = [n(kw) for kw in self._effective_informational_keywords]
+        self._norm_context_phrases: list[str] = [n(ph) for ph in self._effective_context_phrases]
+        self._norm_pdf_wine_terms:  list[str] = [n(t)  for t  in self._effective_pdf_wine_terms]
+
     def __init__(self, page: Page):
         self.page = page
         self.settings = get_settings()
         self.visited_urls: Set[str] = set()
         self.pages_loaded: int = 0
         self.tokens_used: int = 0
+        self._language_hint: str = "en"
+        # Effective keyword lists default to English; overridden in find_wine_list.
+        self._effective_wine_keywords: list[str] = self.WINE_KEYWORDS
+        self._effective_menu_keywords: list[str] = self.MENU_KEYWORDS
+        self._effective_informational_keywords: list[str] = self.INFORMATIONAL_KEYWORDS
+        self._effective_context_phrases: list[str] = self._CONTEXT_PHRASES
+        self._effective_pdf_wine_terms: list[str] = self._PDF_WINE_TERMS
+        self._build_norm_lists()
 
     # ==================================================================
     # Public API
@@ -203,11 +276,44 @@ class RestaurantWineListFinder:
         self,
         restaurant_url: str,
         cached_wine_list_url: Optional[str] = None,
+        language_hint: Optional[str] = None,
     ) -> Optional[str]:
         """Return the URL of a wine list (PDF or page), or ``None``."""
         self.visited_urls.clear()
         self.pages_loaded = 0
         self.tokens_used = 0
+
+        # Set effective keyword lists from language hint (fr/es → merge with EN).
+        # Pre-normalized lists are built once via _build_norm_lists to avoid repeated
+        # normalize calls inside the hot scoring loops.
+        hint = (language_hint or "").strip().lower()
+        if hint == "fr":
+            raw_wine = self.WINE_KEYWORDS + self.WINE_KEYWORDS_FR
+            raw_menu = self.MENU_KEYWORDS + self.MENU_KEYWORDS_FR
+            raw_info = self.INFORMATIONAL_KEYWORDS + self.INFORMATIONAL_KEYWORDS_FR
+            raw_ctx  = self._CONTEXT_PHRASES + self._CONTEXT_PHRASES_FR
+            raw_pdf  = self._PDF_WINE_TERMS + self._PDF_WINE_TERMS_FR
+        elif hint == "es":
+            raw_wine = self.WINE_KEYWORDS + self.WINE_KEYWORDS_ES
+            raw_menu = self.MENU_KEYWORDS + self.MENU_KEYWORDS_ES
+            raw_info = self.INFORMATIONAL_KEYWORDS + self.INFORMATIONAL_KEYWORDS_ES
+            raw_ctx  = self._CONTEXT_PHRASES + self._CONTEXT_PHRASES_ES
+            raw_pdf  = self._PDF_WINE_TERMS + self._PDF_WINE_TERMS_ES
+        else:
+            raw_wine = self.WINE_KEYWORDS
+            raw_menu = self.MENU_KEYWORDS
+            raw_info = self.INFORMATIONAL_KEYWORDS
+            raw_ctx  = self._CONTEXT_PHRASES
+            raw_pdf  = self._PDF_WINE_TERMS
+
+        self._effective_wine_keywords = raw_wine
+        self._effective_menu_keywords = raw_menu
+        self._effective_informational_keywords = raw_info
+        self._effective_context_phrases = raw_ctx
+        self._effective_pdf_wine_terms = raw_pdf
+        self._build_norm_lists()
+
+        self._language_hint = hint or "en"
 
         # ---- Tier 1: previously-known URL ----
         if cached_wine_list_url:
@@ -228,7 +334,9 @@ class RestaurantWineListFinder:
         llm_fn = _get_litellm_completion()
         if self.settings.use_llm_navigation and llm_fn and self.settings.llm_api_key:
             logger.info("  Tier 3: LLM-guided search")
-            url = self._llm_guided_search(restaurant_url, llm_fn, max_pages=4)
+            url = self._llm_guided_search(
+                restaurant_url, llm_fn, max_pages=4, language_hint=self._language_hint
+            )
             if url:
                 return url
 
@@ -362,8 +470,9 @@ class RestaurantWineListFinder:
                     results.append((500 + pdf_score, abs_url, text))
                     continue
                 # Accept any PDF found in wine-navigation context
-                for phrase in self._CONTEXT_PHRASES:
-                    if phrase in context:
+                context_norm = self._normalize_text(context)
+                for phrase_norm in self._norm_context_phrases:
+                    if phrase_norm in context_norm:
                         results.append((400, abs_url, text))
                         break
                 else:
@@ -375,8 +484,10 @@ class RestaurantWineListFinder:
             # A generic link like "here" is very strong signal when the
             # surrounding text says "wine list is available here".
             wine_score = self._score_wine_keywords_only(text, href)
+            context_norm = self._normalize_text(context)
             context_hits = sum(
-                1 for phrase in self._CONTEXT_PHRASES if phrase in context
+                1 for phrase_norm in self._norm_context_phrases
+                if phrase_norm in context_norm
             )
             if context_hits:
                 results.append((300 + wine_score + context_hits * 50,
@@ -471,16 +582,19 @@ class RestaurantWineListFinder:
         Used for external link filtering where we need higher confidence.
         """
         score = 0
-        href_lower = href.lower()
+        text_norm = self._normalize_text(text)
+        href_norm = self._normalize_text(unquote(href))
+        nwk = self._norm_wine_keywords
+        n = len(nwk)
 
-        for rank, kw in enumerate(self.WINE_KEYWORDS):
-            weight = len(self.WINE_KEYWORDS) - rank
-            if kw == text:
+        for rank, kw_norm in enumerate(nwk):
+            weight = n - rank
+            if kw_norm == text_norm:
                 score += weight * 10
-            elif kw in text:
+            elif kw_norm in text_norm:
                 score += weight * 5
-            slug = kw.replace(" ", "-")
-            if slug in href_lower:
+            slug = kw_norm.replace(" ", "-")
+            if slug in href_norm:
                 score += weight * 3
 
         return score
@@ -530,16 +644,16 @@ class RestaurantWineListFinder:
     def _score_pdf(self, url: str, tag: Tag) -> int:
         """Score a PDF link by how likely it is to be a wine list."""
         score = 0
-        path = urlparse(url).path.lower()
-        text = tag.get_text(strip=True).lower()
-        context = self._get_link_context(tag)
+        path = self._normalize_text(unquote(urlparse(url).path))
+        text = self._normalize_text(tag.get_text(strip=True))
+        context = self._normalize_text(self._get_link_context(tag))
 
-        for term in self._PDF_WINE_TERMS:
-            if term in path:
+        for t_norm in self._norm_pdf_wine_terms:
+            if t_norm in path:
                 score += 10
-            if term in text:
+            if t_norm in text:
                 score += 10
-            if term in context:
+            if t_norm in context:
                 score += 5
 
         # Penalise likely non-wine PDFs
@@ -582,7 +696,7 @@ class RestaurantWineListFinder:
             if norm in self.visited_urls:
                 continue
 
-            text = a.get_text(strip=True).lower()
+            text = a.get_text(strip=True)
             context = self._get_link_context(a)
 
             score = self._score_link(text, href, context)
@@ -594,46 +708,54 @@ class RestaurantWineListFinder:
     def _score_link(self, text: str, href: str, context: str) -> int:
         """Score a single link using wine, menu, and informational keywords."""
         score = 0
-        href_lower = href.lower()
+        text_norm = self._normalize_text(text)
+        href_norm = self._normalize_text(unquote(href))
+        context_norm = self._normalize_text(context)
 
         # --- Wine keywords (high weight) ---
-        for rank, kw in enumerate(self.WINE_KEYWORDS):
-            weight = len(self.WINE_KEYWORDS) - rank
-            if kw == text:
+        nwk = self._norm_wine_keywords
+        n = len(nwk)
+        for rank, kw_norm in enumerate(nwk):
+            weight = n - rank
+            if kw_norm == text_norm:
                 score += weight * 10       # exact match on link text
-            elif kw in text:
+            elif kw_norm in text_norm:
                 score += weight * 5        # partial match on link text
-            slug = kw.replace(" ", "-")
-            if slug in href_lower:
+            slug = kw_norm.replace(" ", "-")
+            if slug in href_norm:
                 score += weight * 3        # match in URL path
 
         # --- Menu keywords (lower weight, only if no wine hit yet) ---
         if score == 0:
-            for rank, kw in enumerate(self.MENU_KEYWORDS):
-                weight = len(self.MENU_KEYWORDS) - rank
-                if kw == text:
+            nmk = self._norm_menu_keywords
+            m = len(nmk)
+            for rank, kw_norm in enumerate(nmk):
+                weight = m - rank
+                if kw_norm == text_norm:
                     score += weight * 3
-                elif kw in text:
+                elif kw_norm in text_norm:
                     score += weight * 2
-                slug = kw.replace(" ", "-")
-                if slug in href_lower:
+                slug = kw_norm.replace(" ", "-")
+                if slug in href_norm:
                     score += weight * 1
 
         # --- Informational keywords (lowest weight – last resort) ---
         if score == 0:
-            for rank, kw in enumerate(self.INFORMATIONAL_KEYWORDS):
-                weight = len(self.INFORMATIONAL_KEYWORDS) - rank
-                if kw == text:
+            nik = self._norm_info_keywords
+            k = len(nik)
+            for rank, kw_norm in enumerate(nik):
+                weight = k - rank
+                if kw_norm == text_norm:
                     score += weight * 1
-                elif kw in text:
+                elif kw_norm in text_norm:
                     score += weight * 1
-                slug = kw.replace(" ", "-")
-                if slug in href_lower:
+                slug = kw_norm.replace(" ", "-")
+                if slug in href_norm:
                     score += weight * 1
 
         # --- Context analysis: text surrounding the link ---
-        for phrase in self._CONTEXT_PHRASES:
-            if phrase in context:
+        for phrase_norm in self._norm_context_phrases:
+            if phrase_norm in context_norm:
                 score += 25                # strong signal: nearby text mentions wine
 
         return score
@@ -655,6 +777,7 @@ class RestaurantWineListFinder:
         start_url: str,
         llm_fn,
         max_pages: int = 4,
+        language_hint: str = "en",
     ) -> Optional[str]:
         """Use LLM to decide which links to follow.  Economical: max 2 calls."""
         pages_explored = 0
@@ -696,7 +819,7 @@ class RestaurantWineListFinder:
 
                 # Call LLM
                 suggestions = self._ask_llm_for_links(
-                    llm_fn, url, nav_links, page_text,
+                    llm_fn, url, nav_links, page_text, language_hint=language_hint,
                 )
                 if suggestions:
                     urls_to_explore.extend(suggestions)
@@ -765,6 +888,7 @@ class RestaurantWineListFinder:
         page_url: str,
         nav_links: list[dict],
         page_text: str,
+        language_hint: str = "en",
     ) -> list[str]:
         """Ask LLM which links most likely lead to a wine list.  Returns URLs."""
         # Build compact prompt
@@ -774,7 +898,14 @@ class RestaurantWineListFinder:
              for l in nav_links],
         )
 
+        language_note = ""
+        if language_hint == "fr":
+            language_note = " The restaurant is in France; prefer links in French (e.g. Carte des vins, Vins) when present."
+        elif language_hint == "es":
+            language_note = " The restaurant is in Spain or Mexico; prefer links in Spanish (e.g. Carta de vinos, Vinos) when present."
+
         prompt = f"""Analyze this restaurant website page to find their wine list.
+The site may be in English, French, or Spanish. Look for wine-list links in any of these languages.
 
 Page URL: {page_url}
 Page text snippets: {page_text}
@@ -785,10 +916,11 @@ Links on this page:
 Which links are most likely to lead to the restaurant's wine list?
 Consider:
 - Direct PDF links with wine/beverage in the name
-- Links with text like "Wine", "Wine List", "Wine & Spirits", "Beverage Program"
-- Links where surrounding context mentions wine (e.g. "wine list is available here")
-- Navigation items like "About" or "Menus" that commonly contain wine sections
+- Links with text like "Wine List", "Carte des vins", "Carta de vinos", "Beverage Program", "Carte des boissons", "Carta de bebidas"
+- Links where surrounding context mentions wine (e.g. "wine list is available here", "carte des vins disponible", "carta de vinos disponible")
+- Navigation items like "About", "Menus", "À propos", "Menús", "Nuestra carta" that commonly contain wine sections
 - Informational pages like "FAQ" that sometimes have wine list links or policies
+{language_note}
 
 Return JSON only:
 {{"links": ["url1", "url2"], "reasoning": "brief explanation"}}

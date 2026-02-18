@@ -305,7 +305,7 @@ class WineListDownloader:
         return raw_content, content_type
 
     # Labels for tabs/buttons that expand a wine-list SPA to full content.
-    # Checked in order; first visible match is clicked.
+    # Checked in order; first visible match is clicked. English first, then French, then Spanish.
     _WINE_LIST_TAB_SELECTORS = [
         'text="Wine List"',
         'text="WINE LIST"',
@@ -314,6 +314,18 @@ class WineListDownloader:
         'text="View Full Menu"',
         '.tab-content:has-text("Wine List")',
         '.tab-content:has-text("List")',
+        # French
+        'text="Carte des vins"',
+        'text="Liste des vins"',
+        'text="Vins"',
+        'text="Carte des boissons"',
+        '.tab-content:has-text("Carte des vins")',
+        # Spanish
+        'text="Carta de vinos"',
+        'text="Lista de vinos"',
+        'text="Vinos"',
+        'text="Carta de bebidas"',
+        '.tab-content:has-text("Carta de vinos")',
     ]
 
     def _render_spa_with_playwright(self, url: str) -> Optional[str]:

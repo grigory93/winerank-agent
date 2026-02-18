@@ -220,13 +220,15 @@ Keywords are derived from analysis of 14+ Michelin-starred restaurant websites (
 - **Wine-specific** (30 terms): "wine list", "wine & cocktails", "wine & spirits", "wine selections", "beverage program", "bar menu", "cocktail menu", "spirits selections", etc.
 - **Menu/navigation** (11 terms): "menus", "menus & stories", "dining", "the experience", etc.
 
+The crawler supports **English, French, and Spanish** restaurant sites. For Michelin France, Spain, and Mexico, keyword lists and LLM guidance include localized terms (e.g. "Carte des vins", "Carta de vinos", "Carte des boissons", "Lista de vinos"). The language hint is derived from the restaurant's country: **France** → French; **Spain** and **Mexico** → Spanish; all others (USA, Canada, Denmark, etc.) → English.
+
 PDFs are scored by relevance (wine-related filenames score higher; catering decks are penalized). Irrelevant links (social media, careers, reservations, etc.) are automatically filtered out.
 
 ### LLM-Guided Search
 When enabled (via `WINERANK_USE_LLM_NAVIGATION=true`), the crawler uses AI to intelligently pick which links to follow. The LLM receives a compact page summary (navigation links + text snippets) to stay economical with tokens (~300-400 per call, max 2 calls per restaurant).
 
 ### SPA / Dynamic Page Handling
-Wine lists hosted on JavaScript-rendered platforms (e.g. Binwise digital menus) are automatically detected. The downloader uses Playwright to render the page, clicks interactive tabs (e.g. "Wine List") to expand full content, and captures the rendered DOM — ensuring complete wine data is downloaded even from React/Vue/Angular SPAs.
+Wine lists hosted on JavaScript-rendered platforms (e.g. Binwise digital menus) are automatically detected. The downloader uses Playwright to render the page, clicks interactive tabs (e.g. "Wine List", "Carte des vins", "Carta de vinos") to expand full content, and captures the rendered DOM — ensuring complete wine data is downloaded even from React/Vue/Angular SPAs.
 
 ### Crawl Metrics
 
