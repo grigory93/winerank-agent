@@ -1,8 +1,9 @@
 """Jobs page - view crawler job status and history."""
 import streamlit as st
+from sqlalchemy.orm import joinedload
 
 from winerank.common.db import get_session
-from winerank.common.models import Job, JobStatus
+from winerank.common.models import Job, JobStatus, SiteOfRecord
 
 _STATUS_ICONS = {
     JobStatus.COMPLETED: "\U0001f7e2",
@@ -26,18 +27,37 @@ def render():
     """Render the Jobs page."""
     st.title("Crawler Jobs")
 
-    filter_status = st.multiselect(
-        "Filter by Status",
-        options=[s.value for s in JobStatus],
-        default=[],
-    )
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_status = st.multiselect(
+            "Filter by Status",
+            options=[s.value for s in JobStatus],
+            default=[],
+        )
+    with get_session() as session:
+        sites = session.query(SiteOfRecord).order_by(SiteOfRecord.site_name).all()
+        site_options = ["All"] + [s.site_name for s in sites]
+    with col2:
+        filter_site = st.selectbox(
+            "Filter by Site of Record",
+            options=site_options,
+            index=0,
+        )
 
     st.markdown("---")
 
     with get_session() as session:
-        query = session.query(Job).order_by(Job.started_at.desc())
+        query = (
+            session.query(Job)
+            .options(joinedload(Job.site_of_record))
+            .order_by(Job.started_at.desc())
+        )
         if filter_status:
             query = query.filter(Job.status.in_(filter_status))
+        if filter_site and filter_site != "All":
+            site = session.query(SiteOfRecord).filter_by(site_name=filter_site).first()
+            if site:
+                query = query.filter(Job.site_of_record_id == site.id)
 
         jobs = query.all()
 

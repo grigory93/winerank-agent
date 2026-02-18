@@ -81,37 +81,47 @@ def db_reset(
         raise typer.Exit(1)
 
 
+SITES_OF_RECORD = [
+    ("Michelin Guide USA", "https://guide.michelin.com/us/en/selection/united-states/restaurants"),
+    ("Michelin Guide Canada", "https://guide.michelin.com/us/en/selection/canada/restaurants"),
+    ("Michelin Guide Mexico", "https://guide.michelin.com/us/en/selection/mexico/restaurants"),
+    ("Michelin Guide Denmark", "https://guide.michelin.com/us/en/selection/denmark/restaurants"),
+    ("Michelin Guide France", "https://guide.michelin.com/us/en/selection/france/restaurants"),
+    ("Michelin Guide Spain", "https://guide.michelin.com/us/en/selection/spain/restaurants"),
+]
+
+NAV_NOTES = (
+    "Base URL for restaurants. Use distinction filters:\n"
+    "- 3-stars: /3-stars-michelin\n"
+    "- 2-stars: /2-stars-michelin\n"
+    "- 1-star: /1-star-michelin\n"
+    "- Bib Gourmand: /bib-gourmand\n"
+    "- Selected: /the-plate-michelin\n"
+    "Pagination: /page/N"
+)
+
+
 def _seed_initial_data():
-    """Seed initial data (SiteOfRecord for Michelin)."""
+    """Seed initial data (SiteOfRecord for Michelin guides)."""
     from winerank.common.db import get_session
     from winerank.common.models import SiteOfRecord
-    
+
     console.print("[bold blue]Seeding initial data...[/bold blue]")
-    
+
     with get_session() as session:
-        # Check if Michelin site already exists
-        existing = session.query(SiteOfRecord).filter_by(site_name="Michelin Guide USA").first()
-        if existing:
-            console.print("  • Michelin Guide USA already exists")
-            return
-        
-        # Create Michelin Guide site of record
-        michelin = SiteOfRecord(
-            site_name="Michelin Guide USA",
-            site_url="https://guide.michelin.com/us/en/selection/united-states/restaurants",
-            navigational_notes=(
-                "Base URL for US restaurants. Use distinction filters:\n"
-                "- 3-stars: /3-stars-michelin\n"
-                "- 2-stars: /2-stars-michelin\n"
-                "- 1-star: /1-star-michelin\n"
-                "- Bib Gourmand: /bib-gourmand\n"
-                "- Selected: /the-plate-michelin\n"
-                "Pagination: /page/N"
-            ),
-        )
-        session.add(michelin)
+        for site_name, site_url in SITES_OF_RECORD:
+            existing = session.query(SiteOfRecord).filter_by(site_name=site_name).first()
+            if existing:
+                console.print(f"  • {site_name} already exists")
+                continue
+            site = SiteOfRecord(
+                site_name=site_name,
+                site_url=site_url,
+                navigational_notes=NAV_NOTES,
+            )
+            session.add(site)
+            console.print(f"[bold green]  ✓ Created {site_name} site of record[/bold green]")
         session.commit()
-        console.print("[bold green]  ✓ Created Michelin Guide USA site of record[/bold green]")
 
 
 @app.command("db-manager")
@@ -158,6 +168,12 @@ def crawl(
             "Name matching is case-insensitive and supports partial matches."
         ),
     ),
+    site: str = typer.Option(
+        "USA",
+        "--site",
+        "-s",
+        help="Site of record (e.g. 'Michelin Guide USA' or 'USA'). Default: USA.",
+    ),
     resume: Optional[int] = typer.Option(
         None,
         "--resume",
@@ -181,7 +197,9 @@ def crawl(
 
     Examples:
 
-        winerank crawl --michelin 3              # all 3-star restaurants
+        winerank crawl --michelin 3              # USA 3-star (default site)
+
+        winerank crawl --site Spain --michelin 1
 
         winerank crawl --restaurant "Per Se"     # single restaurant by name
 
@@ -189,6 +207,8 @@ def crawl(
     """
     import logging
 
+    from winerank.common.db import get_session, resolve_site_by_name
+    from winerank.common.models import SiteOfRecord
     from winerank.config import get_settings
     from winerank.crawler.workflow import run_crawler
 
@@ -203,27 +223,49 @@ def crawl(
             console.print(f"[bold blue]Resuming crawler job {resume}...[/bold blue]")
             run_crawler(resume_job_id=resume, force_recrawl=force,
                         restaurant_filter=restaurant)
-        elif restaurant:
-            if michelin:
-                console.print(
-                    "[yellow]--restaurant takes priority; "
-                    "ignoring --michelin[/yellow]"
-                )
-            mode = " (force re-crawl)" if force else ""
-            console.print(
-                f"[bold blue]Crawling single restaurant: "
-                f"{restaurant}{mode}...[/bold blue]"
-            )
-            run_crawler(force_recrawl=force, restaurant_filter=restaurant)
         else:
-            settings = get_settings()
-            michelin_level = michelin or settings.michelin_level
-            mode = " (force re-crawl)" if force else ""
-            console.print(
-                f"[bold blue]Starting crawler for Michelin {michelin_level} "
-                f"restaurants{mode}...[/bold blue]"
-            )
-            run_crawler(michelin_level=michelin_level, force_recrawl=force)
+            with get_session() as session:
+                site_rec = resolve_site_by_name(session, site)
+                if not site_rec:
+                    console.print(
+                        f"[bold red]Site not found: {site!r}. "
+                        "Available sites:[/bold red]"
+                    )
+                    for s in session.query(SiteOfRecord).order_by(SiteOfRecord.site_name).all():
+                        console.print(f"  • {s.site_name}")
+                    raise typer.Exit(1)
+                site_of_record_id = site_rec.id
+                site_name = site_rec.site_name
+
+            if restaurant:
+                if michelin:
+                    console.print(
+                        "[yellow]--restaurant takes priority; "
+                        "ignoring --michelin[/yellow]"
+                    )
+                mode = " (force re-crawl)" if force else ""
+                console.print(
+                    f"[bold blue]Crawling single restaurant: "
+                    f"{restaurant}{mode}...[/bold blue]"
+                )
+                run_crawler(
+                    site_of_record_id=site_of_record_id,
+                    force_recrawl=force,
+                    restaurant_filter=restaurant,
+                )
+            else:
+                settings = get_settings()
+                michelin_level = michelin or settings.michelin_level
+                mode = " (force re-crawl)" if force else ""
+                console.print(
+                    f"[bold blue]Starting crawler for Michelin {michelin_level} "
+                    f"restaurants ({site_name}){mode}...[/bold blue]"
+                )
+                run_crawler(
+                    site_of_record_id=site_of_record_id,
+                    michelin_level=michelin_level,
+                    force_recrawl=force,
+                )
 
         console.print("[bold green]✓ Crawler completed successfully[/bold green]")
 
@@ -284,6 +326,12 @@ def register_wine_list(
         "-f",
         help="Path to wine list PDF (or HTML). If omitted, uses data/downloads/<slug>/ (wine_list.pdf or first .pdf)",
     ),
+    site: Optional[str] = typer.Option(
+        None,
+        "--site",
+        "-s",
+        help="Site of record to disambiguate by name (e.g. USA, France). Ignored when restaurant is an ID.",
+    ),
 ):
     """Register a manually downloaded wine list and run text extraction.
 
@@ -297,15 +345,28 @@ def register_wine_list(
 
         winerank register-wine-list --restaurant "Per Se" --file ~/Downloads/wine_list.pdf
 
+        winerank register-wine-list --restaurant "Le Bernardin" --site USA
+
     (When --file is omitted, expects a PDF in data/downloads/<slug>/ e.g. wine_list.pdf)
     """
-    from winerank.common.db import get_session, resolve_restaurant_by_id_or_name
+    from winerank.common.db import get_session, resolve_restaurant_by_id_or_name, resolve_site_by_name
     from winerank.common.models import CrawlStatus, Restaurant, WineList
     from winerank.config import get_settings
     from winerank.crawler.downloader import WineListDownloader
     from winerank.crawler.text_extractor import WineListTextExtractor
 
-    rec = resolve_restaurant_by_id_or_name(restaurant)
+    site_of_record_id = None
+    if site:
+        with get_session() as session:
+            site_rec = resolve_site_by_name(session, site)
+            if not site_rec:
+                console.print(
+                    f"[bold red]Site not found: {site!r}. "
+                    "Use a site name or short name (e.g. USA, France).[/bold red]"
+                )
+                raise typer.Exit(1)
+            site_of_record_id = site_rec.id
+    rec = resolve_restaurant_by_id_or_name(restaurant, site_of_record_id=site_of_record_id)
     if not rec:
         console.print(f"[bold red]Restaurant not found: {restaurant}[/bold red]")
         raise typer.Exit(1)

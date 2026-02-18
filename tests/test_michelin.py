@@ -32,38 +32,38 @@ class TestExtractDistinction:
 
 
 # ------------------------------------------------------------------
-# _extract_location
+# _extract_location_fallback
 # ------------------------------------------------------------------
 
 class TestExtractLocation:
 
     def test_standard_url(self):
         url = "https://guide.michelin.com/us/en/new-york/new-york/restaurant/per-se"
-        city, state = MichelinScraper._extract_location(url)
+        city, state = MichelinScraper._extract_location_fallback(url)
         assert city == "New York"
         assert state == "New York"
 
     def test_california_url(self):
         url = "https://guide.michelin.com/us/en/california/yountville/restaurant/the-french-laundry"
-        city, state = MichelinScraper._extract_location(url)
+        city, state = MichelinScraper._extract_location_fallback(url)
         assert city == "Yountville"
         assert state == "California"
 
     def test_dc_url(self):
         url = "https://guide.michelin.com/us/en/district-of-columbia/washington/restaurant/minibar"
-        city, state = MichelinScraper._extract_location(url)
+        city, state = MichelinScraper._extract_location_fallback(url)
         assert city == "Washington"
         assert state == "DC"
 
     def test_no_restaurant_in_url(self):
         url = "https://guide.michelin.com/us/en/selection"
-        city, state = MichelinScraper._extract_location(url)
+        city, state = MichelinScraper._extract_location_fallback(url)
         assert city is None
         assert state is None
 
     def test_trailing_slash(self):
         url = "https://guide.michelin.com/us/en/illinois/chicago/restaurant/smyth/"
-        city, state = MichelinScraper._extract_location(url)
+        city, state = MichelinScraper._extract_location_fallback(url)
         assert city == "Chicago"
         assert state == "Illinois"
 
@@ -126,7 +126,7 @@ class TestGetListingUrl:
     @pytest.fixture
     def scraper(self):
         from unittest.mock import MagicMock
-        return MichelinScraper(MagicMock())
+        return MichelinScraper(MagicMock(), base_url=MichelinScraper.BASE_URL)
 
     def test_three_stars(self, scraper):
         url = scraper.get_listing_url("3")
@@ -159,7 +159,9 @@ class TestScrapeListingPageErrors:
         mock_page.goto.side_effect = Exception("Page.goto: Page crashed")
         mock_page.is_closed.return_value = True
 
-        scraper = MichelinScraper(mock_page)
+        scraper = MichelinScraper(
+            mock_page, base_url=MichelinScraper.BASE_URL
+        )
         url = "https://guide.michelin.com/us/en/selection/united-states/restaurants/1-star-michelin"
 
         with pytest.raises(Exception) as exc_info:
@@ -177,7 +179,9 @@ class TestScrapeListingPageErrors:
         mock_page.goto.side_effect = PlaywrightTimeout("Timeout 30000ms exceeded")
         mock_page.is_closed.return_value = False
 
-        scraper = MichelinScraper(mock_page)
+        scraper = MichelinScraper(
+            mock_page, base_url=MichelinScraper.BASE_URL
+        )
         url = "https://guide.michelin.com/us/en/selection/restaurants/1-star-michelin"
 
         with pytest.raises(Exception) as exc_info:

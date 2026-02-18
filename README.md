@@ -83,7 +83,7 @@ uv run winerank db init
 
 #### Run the Crawler
 
-Crawl 3-star Michelin restaurants (default):
+Crawl 3-star Michelin restaurants (default; uses **USA** site):
 ```bash
 uv run winerank crawl
 ```
@@ -92,17 +92,27 @@ or with sending to a log file:
 uv run winerank crawl 2>&1 | tee crawl.log
 ```
 
+Crawl a specific **site of record** (default is USA; case-insensitive):
+```bash
+uv run winerank crawl --site USA --michelin 3
+uv run winerank crawl --site Spain --michelin 1
+uv run winerank crawl --site "Michelin Guide France" --michelin 2
+```
+Supported sites (and short names): **Michelin Guide USA** (USA), **Michelin Guide Canada** (Canada), **Michelin Guide Mexico** (Mexico), **Michelin Guide Denmark** (Denmark), **Michelin Guide France** (France), **Michelin Guide Spain** (Spain). `db init` seeds all six; it does not remove existing data.
+
 Crawl specific Michelin levels:
 ```bash
 uv run winerank crawl --michelin 2
 uv run winerank crawl --michelin gourmand
 ```
 
-Crawl a single restaurant (by name or database ID):
+Crawl a single restaurant (by name or database ID). When using a **name**, the site is used to disambiguate if the same name exists in multiple regions:
 ```bash
 uv run winerank crawl --restaurant "Per Se"
 uv run winerank crawl --restaurant 5
+uv run winerank crawl --restaurant "Le Bernardin" --site USA
 ```
+Prefer restaurant **ID** when you want to target a specific record (e.g. `--restaurant 5`).
 
 Force re-crawl even if a wine list was already found:
 ```bash
@@ -110,7 +120,7 @@ uv run winerank crawl --restaurant "Per Se" --force
 uv run winerank crawl --michelin 3 --force
 ```
 
-Resume a failed job:
+Resume a failed job (`--site` is ignored when resuming):
 ```bash
 uv run winerank crawl --resume 42
 ```
@@ -124,9 +134,10 @@ Register a manually downloaded wine list:
 ```bash
 uv run winerank register-wine-list --restaurant "Smyth"
 uv run winerank register-wine-list --restaurant 5 --file ~/Downloads/wine_list.pdf
+uv run winerank register-wine-list --restaurant "Le Bernardin" --site USA
 ```
 
-Use this command when you've manually downloaded a wine list PDF (e.g., from a browser) and want to register it in the database. If `--file` is not specified, the command will look for a PDF in the restaurant's download directory (`data/downloads/<restaurant-slug>/`). This creates the WineList record, extracts text to `.txt`, and marks the restaurant as `WINE_LIST_FOUND`.
+Use this command when you've manually downloaded a wine list PDF (e.g., from a browser) and want to register it in the database. If `--file` is not specified, the command will look for a PDF in the restaurant's download directory (`data/downloads/<restaurant-slug>/`). This creates the WineList record, extracts text to `.txt`, and marks the restaurant as `WINE_LIST_FOUND`. Use `--site` to disambiguate by name when the same restaurant name exists in multiple regions (e.g. USA vs France).
 
 > **Note**: When both `--restaurant` and `--michelin` are provided, `--restaurant` takes priority and `--michelin` is ignored.
 
@@ -157,7 +168,7 @@ Use `db init` when:
 - Pulling new code that includes schema changes (new migrations)
 - Connecting to a fresh or migrated database
 
-It runs Alembic migrations to create or update tables and seeds the Michelin Guide site of record if missing. It does **not** delete existing data.
+It runs Alembic migrations to create or update tables and seeds all six Michelin Guide sites of record (USA, Canada, Mexico, Denmark, France, Spain) if missing. It does **not** delete existing data; new sites are added without removing old ones.
 
 **Reset database** (destructive – wipes all data):
 

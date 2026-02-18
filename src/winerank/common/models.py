@@ -98,8 +98,10 @@ class Restaurant(Base):
     michelin_distinction: Mapped[Optional[MichelinDistinction]] = mapped_column(
         Enum(MichelinDistinction, name="michelin_distinction_enum"), nullable=True
     )
+    address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="Street address (number + street name)")
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    zip_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, comment="Postal / ZIP code")
     country: Mapped[str] = mapped_column(String(100), nullable=False, default="USA")
     cuisine: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     price_range: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)

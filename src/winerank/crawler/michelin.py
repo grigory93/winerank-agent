@@ -8,8 +8,26 @@ from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 
 from winerank.config import get_settings
+from winerank.crawler.address_parser import parse_address_with_llm
+from winerank.crawler.restaurant_finder import _get_litellm_completion
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_address(text: str) -> bool:
+    """True if text looks like an address (contains comma and digits or country-like tokens)."""
+    if not text or len(text) < 10:
+        return False
+    if "," not in text:
+        return False
+    if re.search(r"\d", text):
+        return True
+    # e.g. "Paris, France" or "Copenhagen"
+    lower = text.lower()
+    for token in ("usa", "france", "spain", "denmark", "mexico", "canada", "city"):
+        if token in lower:
+            return True
+    return True  # comma present, accept
 
 
 class MichelinScraper:
@@ -56,8 +74,9 @@ class MichelinScraper:
         "arizona": "Arizona",
     }
 
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, base_url: str):
         self.page = page
+        self.base_url = base_url.rstrip("/")
         self.settings = get_settings()
 
     # -----------------------------------------------------------------
@@ -66,7 +85,7 @@ class MichelinScraper:
 
     def get_listing_url(self, michelin_level: str, page_num: int = 1) -> str:
         slug = self.DISTINCTION_SLUGS.get(michelin_level.lower(), "3-stars-michelin")
-        url = f"{self.BASE_URL}/{slug}" if slug else self.BASE_URL
+        url = f"{self.base_url}/{slug}" if slug else self.base_url
         if page_num > 1:
             url = f"{url}/page/{page_num}"
         return url
@@ -172,8 +191,28 @@ class MichelinScraper:
             # -- distinction --
             distinction = self._extract_distinction(soup)
 
-            # -- location from URL --
-            city, state = self._extract_location(url)
+            # -- location from address block on page + LLM parsing --
+            address_block = self._extract_address_block(soup)
+            street_address: Optional[str] = None
+            zip_code: Optional[str] = None
+            if address_block:
+                parts = parse_address_with_llm(
+                    address_block,
+                    llm_fn=_get_litellm_completion(),
+                    api_key=self.settings.llm_api_key or None,
+                    model=f"{self.settings.llm_provider}/{self.settings.llm_model}",
+                    temperature=self.settings.llm_temperature,
+                    max_tokens=200,
+                )
+                street_address = parts.address
+                city = parts.city
+                state = parts.state
+                zip_code = parts.zip
+                country = parts.country
+            else:
+                city, state = self._extract_location_fallback(url)
+                country = None
+            # Workflow may override country from site name
 
             # -- cuisine --
             cuisine = self._extract_cuisine(soup)
@@ -186,9 +225,11 @@ class MichelinScraper:
                 "michelin_url": url,
                 "website_url": website_url,
                 "michelin_distinction": distinction,
+                "address": street_address,
                 "city": city,
                 "state": state,
-                "country": "USA",
+                "zip_code": zip_code,
+                "country": country,
                 "cuisine": cuisine,
                 "price_range": price_range,
             }
@@ -242,12 +283,44 @@ class MichelinScraper:
             return "bib-gourmand"
         return "selected"
 
+    @staticmethod
+    def _extract_address_block(soup: BeautifulSoup) -> Optional[str]:
+        """
+        Extract the address block from the restaurant detail page.
+
+        Looks for content under the restaurant name (h1) and above price/cuisine:
+        elements with address-like class names, or the first text block that
+        looks like an address (commas, numbers).
+        """
+        # Prefer explicit address/location container
+        for attr in ("class", "data-testid"):
+            for elem in soup.find_all(attrs={attr: True}):
+                val = elem.get(attr)
+                if isinstance(val, list):
+                    val = " ".join(val)
+                if val and ("address" in val.lower() or "location" in val.lower()):
+                    text = elem.get_text(separator=" ", strip=True)
+                    if text and len(text) < 300 and _looks_like_address(text):
+                        return text
+
+        # Fallback: after h1, take first block that looks like an address
+        h1 = soup.find("h1")
+        if not h1:
+            return None
+        for sibling in h1.find_next_siblings():
+            text = sibling.get_text(separator=" ", strip=True)
+            if not text or len(text) > 250:
+                continue
+            if "$" in text or "Cuisine" in text or "Visit Website" in text:
+                break
+            if _looks_like_address(text):
+                return text
+        return None
+
     @classmethod
-    def _extract_location(cls, url: str) -> tuple[Optional[str], Optional[str]]:
-        """Derive city/state from the Michelin URL path segments."""
+    def _extract_location_fallback(cls, url: str) -> tuple[Optional[str], Optional[str]]:
+        """Derive city/state from the Michelin URL path segments when no address block."""
         parts = url.rstrip("/").split("/")
-        # Typical: …/us/en/{state}/{city}/restaurant/{slug}
-        # Find the index of "restaurant" and work backwards
         try:
             ri = parts.index("restaurant")
         except ValueError:
@@ -258,7 +331,7 @@ class MichelinScraper:
 
         city = None
         if city_raw:
-            city = re.sub(r"[_-]\d+$", "", city_raw)     # strip numeric suffix
+            city = re.sub(r"[_-]\d+$", "", city_raw)
             city = city.replace("-", " ").replace("_", " ").title()
 
         state = None

@@ -1,33 +1,46 @@
 """Restaurants page - view and manage restaurants."""
 import streamlit as st
 import pandas as pd
+from sqlalchemy.orm import joinedload
 
 from winerank.common.db import get_session
-from winerank.common.models import Restaurant, MichelinDistinction, CrawlStatus
+from winerank.common.models import Restaurant, SiteOfRecord, MichelinDistinction, CrawlStatus
 
 
 def render():
     """Render the Restaurants page."""
     st.title("Restaurants")
 
-    # Filters
-    col1, col2, col3 = st.columns(3)
+    with get_session() as session:
+        sites = session.query(SiteOfRecord).order_by(SiteOfRecord.site_name).all()
+        site_options = ["All"] + [s.site_name for s in sites]
+
+    filter_name = st.text_input("Search by Name", placeholder="Type to filter…")
+
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
+        filter_site = st.selectbox(
+            "Site of Record",
+            options=site_options,
+            index=0,
+        )
+
+    with col2:
         filter_distinction = st.multiselect(
             "Michelin Distinction",
             options=[d.value for d in MichelinDistinction],
             default=[],
         )
 
-    with col2:
+    with col3:
         filter_status = st.multiselect(
             "Crawl Status",
             options=[s.value for s in CrawlStatus],
             default=[],
         )
 
-    with col3:
+    with col4:
         filter_has_wine_list = st.selectbox(
             "Has Wine List",
             options=["All", "Yes", "No"],
@@ -37,8 +50,17 @@ def render():
     st.markdown("---")
 
     with get_session() as session:
-        query = session.query(Restaurant)
+        query = (
+            session.query(Restaurant)
+            .options(joinedload(Restaurant.site_of_record))
+        )
 
+        if filter_name:
+            query = query.filter(Restaurant.name.ilike(f"%{filter_name}%"))
+        if filter_site and filter_site != "All":
+            site = session.query(SiteOfRecord).filter_by(site_name=filter_site).first()
+            if site:
+                query = query.filter(Restaurant.site_of_record_id == site.id)
         if filter_distinction:
             query = query.filter(Restaurant.michelin_distinction.in_(filter_distinction))
         if filter_status:
@@ -64,13 +86,20 @@ def render():
                 secs = float(r.crawl_duration_seconds)
                 duration = f"{secs:.1f}s" if secs < 60 else f"{secs / 60:.1f}m"
 
+            site_name = r.site_of_record.site_name if r.site_of_record else "\u2014"
             data.append(
                 {
+                    "Site": site_name,
                     "ID": r.id,
                     "Name": r.name,
                     "Distinction": r.michelin_distinction.value if r.michelin_distinction else "",
+                    "Address": r.address or "",
                     "City": r.city or "",
                     "State": r.state or "",
+                    "ZIP": r.zip_code or "",
+                    "Country": r.country or "",
+                    "Cuisine": r.cuisine or "",
+                    "Price": r.price_range or "",
                     "Status": r.crawl_status.value,
                     "Wine List": "\u2713" if r.wine_list_url else "\u2717",
                     "Crawl Time": duration,
@@ -95,7 +124,12 @@ def render():
             step=1,
         )
 
-        selected = session.query(Restaurant).filter_by(id=selected_id).first()
+        selected = (
+            session.query(Restaurant)
+            .options(joinedload(Restaurant.site_of_record))
+            .filter_by(id=selected_id)
+            .first()
+        )
 
         if not selected:
             st.warning(f"Restaurant with ID {selected_id} not found")
@@ -106,10 +140,15 @@ def render():
         with col1:
             st.write(f"**Name:** {selected.name}")
             st.write(
+                f"**Site:** {selected.site_of_record.site_name if selected.site_of_record else 'N/A'}"
+            )
+            st.write(
                 f"**Distinction:** {selected.michelin_distinction.value if selected.michelin_distinction else 'N/A'}"
             )
+            st.write(f"**Address:** {selected.address or 'N/A'}")
             st.write(f"**City:** {selected.city or 'N/A'}")
             st.write(f"**State:** {selected.state or 'N/A'}")
+            st.write(f"**ZIP:** {selected.zip_code or 'N/A'}")
             st.write(f"**Country:** {selected.country}")
             st.write(f"**Cuisine:** {selected.cuisine or 'N/A'}")
             st.write(f"**Price Range:** {selected.price_range or 'N/A'}")

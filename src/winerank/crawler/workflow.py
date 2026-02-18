@@ -315,17 +315,16 @@ def init_job_node(state: CrawlerState) -> dict:
                 session.commit()
                 return {}                   # keep existing state unchanged
 
-        # New job
-        site = session.query(SiteOfRecord).filter_by(
-            site_name="Michelin Guide USA"
-        ).first()
-        if not site:
-            site = SiteOfRecord(
-                site_name="Michelin Guide USA",
-                site_url="https://guide.michelin.com/us/en/selection/united-states/restaurants",
+        # New job: site_of_record_id must be provided by CLI
+        site_of_record_id = state.get("site_of_record_id")
+        if not site_of_record_id:
+            raise ValueError(
+                "site_of_record_id is required for new jobs. "
+                "Pass --site when running the crawler."
             )
-            session.add(site)
-            session.flush()
+        site = session.query(SiteOfRecord).filter_by(id=site_of_record_id).first()
+        if not site:
+            raise ValueError(f"Site of record id={site_of_record_id} not found.")
 
         michelin_level = state.get("michelin_level", settings.michelin_level)
 
@@ -360,9 +359,15 @@ def init_job_node(state: CrawlerState) -> dict:
         }
 
 
-def _resolve_restaurant_filter(filter_value: str) -> Optional[Restaurant]:
-    """Look up a restaurant by ID (if numeric) or name (case-insensitive)."""
-    return resolve_restaurant_by_id_or_name(filter_value)
+def _resolve_restaurant_filter(
+    filter_value: str,
+    site_of_record_id: Optional[int] = None,
+) -> Optional[Restaurant]:
+    """Look up a restaurant by ID (if numeric) or name (case-insensitive).
+
+    When site_of_record_id is set, name resolution is scoped to that site.
+    """
+    return resolve_restaurant_by_id_or_name(filter_value, site_of_record_id=site_of_record_id)
 
 
 def fetch_listing_page_node(state: CrawlerState) -> dict:
@@ -374,7 +379,10 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
     # --- Single-restaurant mode ---
     restaurant_filter = state.get("restaurant_filter")
     if restaurant_filter:
-        rec = _resolve_restaurant_filter(restaurant_filter)
+        rec = _resolve_restaurant_filter(
+            restaurant_filter,
+            site_of_record_id=state.get("site_of_record_id"),
+        )
         if not rec:
             msg = f"Restaurant not found for filter: {restaurant_filter}"
             logger.error(msg)
@@ -399,9 +407,18 @@ def fetch_listing_page_node(state: CrawlerState) -> dict:
         }
 
     # --- Normal Michelin listing mode ---
+    with get_session() as session:
+        site = session.query(SiteOfRecord).filter_by(
+            id=state["site_of_record_id"]
+        ).first()
+        if not site:
+            raise ValueError(
+                f"Site of record id={state['site_of_record_id']} not found."
+            )
+        base_url = site.site_url
     page = _get_page()
-    scraper = MichelinScraper(page)
-    
+    scraper = MichelinScraper(page, base_url=base_url)
+
     # Determine which page to fetch
     urls_so_far = state.get("restaurant_urls") or []
     idx_so_far = state.get("current_restaurant_idx", 0)
@@ -499,8 +516,10 @@ def _load_restaurant_from_db(restaurant_id: int) -> Optional[dict]:
             "michelin_distinction": (
                 getattr(rec.michelin_distinction, "value", None)
             ),
+            "address": rec.address,
             "city": rec.city,
             "state": rec.state,
+            "zip_code": rec.zip_code,
             "country": rec.country,
             "cuisine": rec.cuisine,
             "price_range": rec.price_range,
@@ -541,13 +560,25 @@ def process_restaurant_node(state: CrawlerState) -> dict:
         }
 
     # --- Normal Michelin scrape path ---
+    with get_session() as session:
+        site = session.query(SiteOfRecord).filter_by(
+            id=state["site_of_record_id"]
+        ).first()
+        if not site:
+            raise ValueError(
+                f"Site of record id={state['site_of_record_id']} not found."
+            )
+        base_url = site.site_url
+        # Derive country from site name, e.g. "Michelin Guide USA" -> "USA"
+        site_country = site.site_name.replace("Michelin Guide ", "", 1)
     page = _get_page()
-    scraper = MichelinScraper(page)
+    scraper = MichelinScraper(page, base_url=base_url)
 
     try:
         logger.info("Processing restaurant %d/%d: %s",
                      idx + 1, len(urls), restaurant_url)
         data = scraper.scrape_restaurant_detail(restaurant_url)
+        data["country"] = data.get("country") or site_country
 
         # Upsert restaurant in database
         with get_session() as session:
@@ -559,14 +590,23 @@ def process_restaurant_node(state: CrawlerState) -> dict:
                 data["id"] = existing.id
                 data["crawl_status"] = existing.crawl_status
                 data["wine_list_url"] = existing.wine_list_url
+                # Refresh address fields from the latest scrape
+                existing.address = data.get("address") or existing.address
+                existing.city = data.get("city") or existing.city
+                existing.state = data.get("state") or existing.state
+                existing.zip_code = data.get("zip_code") or existing.zip_code
+                existing.country = data.get("country") or existing.country
+                session.commit()
             else:
                 restaurant = Restaurant(
                     name=data["name"],
                     michelin_url=data["michelin_url"],
                     website_url=data["website_url"],
                     michelin_distinction=data["michelin_distinction"],
+                    address=data.get("address"),
                     city=data["city"],
                     state=data["state"],
+                    zip_code=data.get("zip_code"),
                     country=data["country"],
                     cuisine=data["cuisine"],
                     price_range=data["price_range"],
@@ -903,6 +943,7 @@ def run_crawler(
     resume_job_id: Optional[int] = None,
     force_recrawl: bool = False,
     restaurant_filter: Optional[str] = None,
+    site_of_record_id: Optional[int] = None,
 ) -> dict:
     """
     Run the crawler workflow.
@@ -919,6 +960,8 @@ def run_crawler(
         When set, crawl only a single restaurant.  Accepts a restaurant ID
         (numeric string) or a name (case-insensitive match).  Michelin
         listing scrape is bypassed entirely.
+    site_of_record_id:
+        Required for new jobs (not resume). ID of the site of record to crawl.
     """
     global _browser_page, _browser, _playwright_instance
     settings = get_settings()
@@ -957,6 +1000,7 @@ def run_crawler(
                 job_id = resume_job_id
             else:
                 initial_state = {
+                    "site_of_record_id": site_of_record_id,
                     "michelin_level": michelin_level or settings.michelin_level,
                     "force_recrawl": force_recrawl,
                     "restaurant_filter": restaurant_filter,

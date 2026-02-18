@@ -15,6 +15,17 @@ from winerank.crawler.workflow import (
 )
 
 
+def _mock_site(mock_get_session):
+    """Configure get_session mock so SiteOfRecord lookup returns a site with site_url."""
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+    mock_site = MagicMock()
+    mock_site.site_url = "https://guide.michelin.com/us/en/selection/united-states/restaurants"
+    q = mock_session.query.return_value.filter_by.return_value
+    q.first.return_value = mock_site
+    return mock_session
+
+
 # ------------------------------------------------------------------
 # fetch_listing_page_node – circuit breaker and error paths
 # ------------------------------------------------------------------
@@ -39,6 +50,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 1,
             "restaurants_found": 0,
@@ -47,7 +59,8 @@ class TestFetchListingPageNodeCircuitBreaker:
             "errors": [],
         }
 
-        with patch("winerank.crawler.workflow.get_session"):
+        with patch("winerank.crawler.workflow.get_session") as mock_get_session:
+            _mock_site(mock_get_session)
             result = fetch_listing_page_node(cast(CrawlerState, state))
 
         assert result["consecutive_fetch_failures"] == 1
@@ -62,6 +75,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 1,
             "restaurants_found": 0,
@@ -71,9 +85,10 @@ class TestFetchListingPageNodeCircuitBreaker:
         }
 
         with (
-            patch("winerank.crawler.workflow.get_session"),
+            patch("winerank.crawler.workflow.get_session") as mock_get_session,
             patch("winerank.crawler.workflow._recover_browser") as mock_recover,
         ):
+            _mock_site(mock_get_session)
             result = fetch_listing_page_node(cast(CrawlerState, state))
 
         assert result["consecutive_fetch_failures"] == 3
@@ -91,6 +106,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 2,
             "restaurants_found": 0,
@@ -99,7 +115,8 @@ class TestFetchListingPageNodeCircuitBreaker:
             "errors": [],
         }
 
-        with patch("winerank.crawler.workflow.get_session"):
+        with patch("winerank.crawler.workflow.get_session") as mock_get_session:
+            _mock_site(mock_get_session)
             result = fetch_listing_page_node(cast(CrawlerState, state))
 
         assert result["consecutive_fetch_failures"] == 1
@@ -112,6 +129,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 1,
             "restaurants_found": 0,
@@ -121,9 +139,10 @@ class TestFetchListingPageNodeCircuitBreaker:
         }
 
         with (
-            patch("winerank.crawler.workflow.get_session"),
+            patch("winerank.crawler.workflow.get_session") as mock_get_session,
             patch("winerank.crawler.workflow._recover_browser") as mock_recover,
         ):
+            _mock_site(mock_get_session)
             fetch_listing_page_node(cast(CrawlerState, state))
 
         mock_recover.assert_called_once()
@@ -135,6 +154,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 1,
             "restaurants_found": 0,
@@ -144,9 +164,10 @@ class TestFetchListingPageNodeCircuitBreaker:
         }
 
         with (
-            patch("winerank.crawler.workflow.get_session"),
+            patch("winerank.crawler.workflow.get_session") as mock_get_session,
             patch("winerank.crawler.workflow._recover_browser") as mock_recover,
         ):
+            _mock_site(mock_get_session)
             fetch_listing_page_node(cast(CrawlerState, state))
 
         mock_recover.assert_called_once()
@@ -162,6 +183,7 @@ class TestFetchListingPageNodeCircuitBreaker:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "1-star",
             "current_page": 1,
             "restaurants_found": 0,
@@ -170,9 +192,13 @@ class TestFetchListingPageNodeCircuitBreaker:
             "errors": [],
         }
 
-        with patch("winerank.crawler.workflow.get_session") as mock_session:
-            mock_session.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_session.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("winerank.crawler.workflow.get_session") as mock_get_session:
+            mock_session = _mock_site(mock_get_session)
+            mock_job = MagicMock()
+            mock_session.query.return_value.filter_by.return_value.first.side_effect = [
+                mock_session.query.return_value.filter_by.return_value.first.return_value,  # site
+                mock_job,  # job for progress persist
+            ]
             result = fetch_listing_page_node(cast(CrawlerState, state))
 
         assert result["consecutive_fetch_failures"] == 0
@@ -212,7 +238,12 @@ class TestFetchListingPagePagingAdvancement:
             mock_scraper = mock_scraper_cls.return_value
             mock_session = MagicMock()
             mock_get_session.return_value.__enter__.return_value = mock_session
-            mock_session.query.return_value.filter_by.return_value.first.return_value = None
+            mock_site = MagicMock()
+            mock_site.site_url = "https://guide.michelin.com/us/en/selection/united-states/restaurants"
+            mock_session.query.return_value.filter_by.return_value.first.side_effect = [
+                mock_site,  # SiteOfRecord lookup
+                None,      # Job lookup for progress
+            ]
             yield mock_page, mock_scraper
 
     def test_first_page_fetch_does_not_advance_page(self, mock_get_page_and_scraper):
@@ -227,6 +258,7 @@ class TestFetchListingPagePagingAdvancement:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "3",
             "current_page": 1,
             "restaurant_urls": [],  # Empty - first fetch
@@ -256,6 +288,7 @@ class TestFetchListingPagePagingAdvancement:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "3",
             "current_page": 1,
             "restaurant_urls": ["url1", "url2", "url3"],  # Previous page's URLs
@@ -285,6 +318,7 @@ class TestFetchListingPagePagingAdvancement:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "3",
             "current_page": 1,
             "restaurant_urls": ["url1", "url2", "url3"],
@@ -312,6 +346,7 @@ class TestFetchListingPagePagingAdvancement:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "2",
             "current_page": 2,
             "restaurant_urls": ["url4", "url5", "url6"],  # Page 2's URLs
@@ -340,6 +375,7 @@ class TestFetchListingPagePagingAdvancement:
 
         state = {
             "job_id": 1,
+            "site_of_record_id": 1,
             "michelin_level": "3",
             "current_page": 2,  # Circuit breaker already advanced this
             "restaurant_urls": [],  # Empty from circuit breaker

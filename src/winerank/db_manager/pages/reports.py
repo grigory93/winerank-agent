@@ -1,9 +1,10 @@
 """Reports page - summary metrics and dashboards."""
 import streamlit as st
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from winerank.common.db import get_session
-from winerank.common.models import Restaurant, WineList, Wine, Job, CrawlStatus, JobStatus
+from winerank.common.models import Restaurant, SiteOfRecord, WineList, Wine, Job, CrawlStatus, JobStatus
 
 
 def render():
@@ -50,7 +51,25 @@ def render():
         else:
             st.info("No restaurants in database yet")
 
-        # ── Breakdowns by distinction and crawl status ─────────────
+        # ── Breakdowns by site, distinction and crawl status ──────
+        st.markdown("---")
+        st.subheader("By Site of Record")
+        site_counts = (
+            session.query(
+                SiteOfRecord.site_name,
+                func.count(Restaurant.id).label("count"),
+            )
+            .outerjoin(Restaurant, Restaurant.site_of_record_id == SiteOfRecord.id)
+            .group_by(SiteOfRecord.id, SiteOfRecord.site_name)
+            .order_by(SiteOfRecord.site_name)
+            .all()
+        )
+        if site_counts:
+            for site_name, count in site_counts:
+                st.write(f"**{site_name}:** {count}")
+        else:
+            st.info("No sites of record yet (run `winerank db init`)")
+
         st.markdown("---")
         col1, col2 = st.columns(2)
 
@@ -118,7 +137,13 @@ def render():
         # ── Recent jobs ────────────────────────────────────────────
         st.markdown("---")
         st.subheader("Recent Jobs")
-        recent_jobs = session.query(Job).order_by(Job.started_at.desc()).limit(10).all()
+        recent_jobs = (
+            session.query(Job)
+            .options(joinedload(Job.site_of_record))
+            .order_by(Job.started_at.desc())
+            .limit(10)
+            .all()
+        )
 
         if recent_jobs:
             job_data = []
@@ -128,9 +153,11 @@ def render():
                     m = int(job.duration_seconds // 60)
                     s = int(job.duration_seconds % 60)
                     duration = f"{m}m {s}s"
+                site_name = job.site_of_record.site_name if job.site_of_record else "N/A"
                 job_data.append(
                     {
                         "ID": job.id,
+                        "Site": site_name,
                         "Type": job.job_type,
                         "Level": job.michelin_level or "N/A",
                         "Status": job.status.value,
