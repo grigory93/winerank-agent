@@ -203,20 +203,41 @@ class Wine(Base):
     __tablename__ = "wines"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    winery: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    varietal: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    wine_type: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True, comment="Red, White, Sparkling, etc."
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False, comment="the specific brand name of the wine bottle or by the glass"
     )
-    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    region: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    list_identifier: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, comment="Internal wine ID from the list (e.g. bin number, SKU, list code)"
+    )
+    winery: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, comment="the brand or estate name"
+    )
+    varietal: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, comment="the specific grapes(s) or blends")
+    wine_type: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, comment="Red, White, Rose, Sparkling, Desert, etc."
+    )
+    country: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, comment="the country of origin"
+    )
+    region: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, comment="Broad area (e.g. California, Bordeaux)"
+    )
+    sub_region: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, comment="Nested area (e.g. Sonoma County)"
+    )
+    appellation: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, comment="Legal geographic designation, AVA/AOC/DOC (e.g. Russian River Valley)"
+    )
+    designation: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, comment="Special title: Reserve, Estate Bottled, Grand Cru, Grand Vin, etc."
+    )
     vineyard: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     vintage: Mapped[Optional[str]] = mapped_column(
         String(20), nullable=True, comment="Year or NV (non-vintage)"
     )
     format: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True, comment="Bottle, by the glass, magnum, etc."
+        String(50), nullable=True, comment="Bottle size, by the glass, magnum, etc."
     )
     price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(10, 2), nullable=True, comment="Price in restaurant's currency"

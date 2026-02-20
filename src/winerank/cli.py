@@ -19,32 +19,48 @@ app.add_typer(db_app, name="db")
 console = Console()
 
 
-@db_app.command("init")
-def db_init():
-    """Initialize database by running Alembic migrations."""
-    from alembic.config import Config
-    from alembic import command
-    
-    console.print("[bold blue]Initializing database...[/bold blue]")
-    
-    # Get alembic.ini path
+def _get_alembic_cfg():
+    """Load Alembic config; exit if alembic.ini not found."""
     alembic_ini = Path("alembic.ini")
     if not alembic_ini.exists():
         console.print("[bold red]Error: alembic.ini not found[/bold red]")
         console.print("Make sure you're running from the project root directory")
         raise typer.Exit(1)
-    
+    from alembic.config import Config
+    return Config(str(alembic_ini))
+
+
+@db_app.command("init")
+def db_init():
+    """Initialize database by running Alembic migrations."""
+    from alembic import command
+
+    console.print("[bold blue]Initializing database...[/bold blue]")
+
     try:
-        # Run migrations
-        alembic_cfg = Config(str(alembic_ini))
+        alembic_cfg = _get_alembic_cfg()
         command.upgrade(alembic_cfg, "head")
+        command.stamp(alembic_cfg, "head")
         console.print("[bold green]✓ Database initialized successfully[/bold green]")
-        
-        # Seed initial data
+
         _seed_initial_data()
-        
+
     except Exception as e:
         console.print(f"[bold red]Error initializing database: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@db_app.command("stamp")
+def db_stamp():
+    """Set alembic_version to head without running migrations. Use if init shows revision errors."""
+    from alembic import command
+
+    try:
+        alembic_cfg = _get_alembic_cfg()
+        command.stamp(alembic_cfg, "head")
+        console.print("[bold green]✓ Database stamped at head (1cff6e8d6528)[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Error stamping database: {e}[/bold red]")
         raise typer.Exit(1)
 
 
@@ -65,17 +81,19 @@ def db_reset(
             console.print("Aborted.")
             raise typer.Exit(0)
     
+    from alembic import command
     from winerank.common.db import reset_db
-    
+
     console.print("[bold blue]Resetting database...[/bold blue]")
-    
+
     try:
         reset_db()
+        alembic_cfg = _get_alembic_cfg()
+        command.stamp(alembic_cfg, "head")
         console.print("[bold green]✓ Database reset successfully[/bold green]")
-        
-        # Seed initial data
+
         _seed_initial_data()
-        
+
     except Exception as e:
         console.print(f"[bold red]Error resetting database: {e}[/bold red]")
         raise typer.Exit(1)

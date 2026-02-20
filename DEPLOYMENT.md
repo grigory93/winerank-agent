@@ -303,6 +303,19 @@ postgresql://user:pass@host:5432/db  # Missing +psycopg
 - Verify database is running: `docker compose ps` (dev) or cloud console (prod)
 - Test connection: `psql $WINERANK_DATABASE_URL`
 
+### Alembic revision errors when running `db init`
+
+**Error:** e.g. "Can't locate revision", "Multiple head revisions", or warnings about `alembic_version`.
+
+**Solution:** Only if your database schema already matches the current migration (e.g. after consolidating migrations or restoring a backup with the correct schema), set the version without running migrations:
+
+```bash
+uv run winerank db stamp
+uv run winerank db init
+```
+
+Do *not* run `db stamp` on an empty database or when the schema is behind head—otherwise migrations will be skipped and tables or columns may be missing. See README → Database Management for the full `db stamp` description.
+
 ### Playwright System Dependencies Missing (Linux)
 
 **Error:**

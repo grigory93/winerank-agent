@@ -119,6 +119,9 @@ def test_wine_list_wines_relationship(test_session):
         wine_type="Red",
         country="France",
         region="Bordeaux",
+        sub_region="Médoc",
+        appellation="Margaux",
+        designation="Grand Cru",
         vintage="2015",
         price=500.00,
     )

@@ -266,6 +266,12 @@ def upgrade() -> None:
         "wines",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column(
+            "list_identifier",
+            sa.String(length=100),
+            nullable=True,
+            comment="Internal wine ID from the list (e.g. bin number, SKU, list code)",
+        ),
         sa.Column("winery", sa.String(length=255), nullable=True),
         sa.Column("varietal", sa.String(length=100), nullable=True),
         sa.Column(
@@ -275,7 +281,30 @@ def upgrade() -> None:
             comment="Red, White, Sparkling, etc.",
         ),
         sa.Column("country", sa.String(length=100), nullable=True),
-        sa.Column("region", sa.String(length=255), nullable=True),
+        sa.Column(
+            "region",
+            sa.String(length=255),
+            nullable=True,
+            comment="Broad area (e.g. California, Bordeaux)",
+        ),
+        sa.Column(
+            "sub_region",
+            sa.String(length=255),
+            nullable=True,
+            comment="Nested area (e.g. Sonoma County)",
+        ),
+        sa.Column(
+            "appellation",
+            sa.String(length=255),
+            nullable=True,
+            comment="Legal geographic designation, AVA/AOC/DOC (e.g. Russian River Valley)",
+        ),
+        sa.Column(
+            "designation",
+            sa.String(length=100),
+            nullable=True,
+            comment="Special title: Reserve, Estate Bottled, Grand Cru, Grand Vin, etc.",
+        ),
         sa.Column("vineyard", sa.String(length=255), nullable=True),
         sa.Column(
             "vintage",

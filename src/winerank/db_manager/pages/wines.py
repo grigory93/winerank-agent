@@ -52,12 +52,16 @@ def render():
                 {
                     "ID": w.id,
                     "Name": w.name,
+                    "List ID": w.list_identifier or "",
                     "Winery": w.winery or "",
+                    "Designation": w.designation or "",
                     "Varietal": w.varietal or "",
                     "Type": w.wine_type or "",
                     "Vintage": w.vintage or "",
                     "Country": w.country or "",
                     "Region": w.region or "",
+                    "Sub-region": w.sub_region or "",
+                    "Appellation": w.appellation or "",
                     "Price": f"${w.price}" if w.price else "",
                     "Restaurant": w.wine_list.restaurant.name,
                 }
@@ -87,7 +91,9 @@ def render():
 
         with col1:
             st.write(f"**Name:** {selected.name}")
+            st.write(f"**List ID:** {selected.list_identifier or 'N/A'}")
             st.write(f"**Winery:** {selected.winery or 'N/A'}")
+            st.write(f"**Designation:** {selected.designation or 'N/A'}")
             st.write(f"**Varietal:** {selected.varietal or 'N/A'}")
             st.write(f"**Type:** {selected.wine_type or 'N/A'}")
             st.write(f"**Vintage:** {selected.vintage or 'N/A'}")
@@ -95,6 +101,8 @@ def render():
         with col2:
             st.write(f"**Country:** {selected.country or 'N/A'}")
             st.write(f"**Region:** {selected.region or 'N/A'}")
+            st.write(f"**Sub-region:** {selected.sub_region or 'N/A'}")
+            st.write(f"**Appellation:** {selected.appellation or 'N/A'}")
             st.write(f"**Vineyard:** {selected.vineyard or 'N/A'}")
             st.write(f"**Format:** {selected.format or 'N/A'}")
             st.write(f"**Price:** ${selected.price}" if selected.price else "**Price:** N/A")

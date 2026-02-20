@@ -170,6 +170,16 @@ Use `db init` when:
 
 It runs Alembic migrations to create or update tables and seeds all six Michelin Guide sites of record (USA, Canada, Mexico, Denmark, France, Spain) if missing. It does **not** delete existing data; new sites are added without removing old ones.
 
+**Stamp database** (set migration version without running migrations):
+
+```bash
+uv run winerank db stamp
+```
+
+Use `db stamp` when the database schema is already correct but Alembic reports a wrong or missing revision (e.g. after consolidating migrations or switching branches). It sets `alembic_version` to the current head so that the next `db init` runs without revision errors. It does **not** create or change tables.
+
+**When it's safe:** Schema already matches the current migration (e.g. you squashed migrations and the DB was fully migrated, or you fixed the revision table after a restore). **When it's not:** Do *not* run stamp on an empty database (tables would never be created) or when the schema is behind head (you would skip applying migrations and miss new columns/tables).
+
 **Reset database** (destructive – wipes all data):
 
 ```bash
