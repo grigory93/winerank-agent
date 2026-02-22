@@ -16,6 +16,9 @@ app = typer.Typer(
 db_app = typer.Typer(help="Database management commands")
 app.add_typer(db_app, name="db")
 
+sft_app = typer.Typer(help="SFT training data generation commands")
+app.add_typer(sft_app, name="sft")
+
 console = Console()
 
 
@@ -456,6 +459,449 @@ def register_wine_list(
         session.commit()
 
     console.print(f"[bold green]Wine list registered (id={wine_list.id}), text saved to {text_path}[/bold green]")
+
+
+# ---------------------------------------------------------------------------
+# SFT subcommands
+# ---------------------------------------------------------------------------
+
+
+def _sft_settings_override(
+    taxonomy_model: Optional[str],
+    teacher_model: Optional[str],
+    judge_model: Optional[str],
+    mode: Optional[str],
+    seed: Optional[int],
+    num_samples: Optional[int],
+    min_judge_score: Optional[float],
+):
+    """Load SFT settings and apply any CLI overrides."""
+    from winerank.sft.config import SFTSettings
+
+    kwargs: dict = {}
+    if taxonomy_model:
+        kwargs["taxonomy_model"] = taxonomy_model
+    if teacher_model:
+        kwargs["teacher_model"] = teacher_model
+    if judge_model:
+        kwargs["judge_model"] = judge_model
+    if mode:
+        kwargs["training_data_mode"] = mode
+    if seed is not None:
+        kwargs["seed"] = seed
+    if num_samples is not None:
+        kwargs["num_samples"] = num_samples
+    if min_judge_score is not None:
+        kwargs["min_judge_score"] = min_judge_score
+    return SFTSettings(**kwargs)
+
+
+@sft_app.command("init")
+def sft_init(
+    examples_dir: Optional[Path] = typer.Option(
+        None,
+        "--examples-dir",
+        help="Directory with wine list files (default: data/examples)",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output path for manifest.yaml (default: data/sft/manifest.yaml)",
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing manifest"),
+):
+    """Generate manifest.yaml from wine lists in the examples directory."""
+    from winerank.sft.config import SFTSettings
+    from winerank.sft.manifest import generate_manifest, save_manifest
+
+    settings = SFTSettings()
+    examples_path = examples_dir or Path(settings.examples_dir)
+    manifest_path = output or settings.manifest_file
+
+    if manifest_path.exists() and not force:
+        console.print(f"[yellow]Manifest already exists at {manifest_path}. Use --force to overwrite.[/yellow]")
+        raise typer.Exit(0)
+
+    if not examples_path.exists():
+        console.print(f"[bold red]Examples directory not found: {examples_path}[/bold red]")
+        raise typer.Exit(1)
+
+    manifest = generate_manifest(examples_path)
+    save_manifest(manifest, manifest_path)
+
+    console.print(f"[bold green]✓ Manifest created at {manifest_path}[/bold green]")
+    console.print(f"  {len(manifest.lists)} wine lists registered")
+
+
+@sft_app.command("extract-taxonomy")
+def sft_extract_taxonomy(
+    taxonomy_model: Optional[str] = typer.Option(None, "--taxonomy-model", help="Override taxonomy model"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed extractions"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+):
+    """Phase 1: Validate wine lists and extract taxonomy for all entries."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.manifest import load_manifest
+    from winerank.sft.progress import ProgressTracker
+    from winerank.sft.taxonomy_extractor import extract_taxonomy_for_all
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    if taxonomy_model:
+        settings = SFTSettings(taxonomy_model=taxonomy_model)
+
+    settings.ensure_dirs()
+
+    try:
+        manifest = load_manifest(settings.manifest_file)
+    except FileNotFoundError:
+        console.print("[bold red]Manifest not found. Run 'winerank sft init' first.[/bold red]")
+        raise typer.Exit(1)
+
+    progress = ProgressTracker(settings.progress_file)
+    if force:
+        progress.reset()
+
+    console.print(f"[bold blue]Extracting taxonomy for {len(manifest.lists)} wine lists...[/bold blue]")
+    if dry_run:
+        console.print("[yellow]DRY RUN mode - no LLM calls will be made[/yellow]")
+
+    results = extract_taxonomy_for_all(
+        manifest.lists,
+        settings=settings,
+        progress=progress,
+        force=force,
+        dry_run=dry_run,
+    )
+
+    ok = sum(1 for r in results.values() if r and r.status == "OK")
+    not_list = sum(1 for r in results.values() if r and r.status == "NOT_A_LIST")
+    errors = sum(1 for r in results.values() if r is None)
+
+    console.print(f"[bold green]✓ Taxonomy extraction complete[/bold green]")
+    console.print(f"  OK: {ok} | NOT_A_LIST: {not_list} | Errors: {errors}")
+
+
+@sft_app.command("sample")
+def sft_sample(
+    seed: Optional[int] = typer.Option(None, "--seed", help="Random seed"),
+    num_samples: Optional[int] = typer.Option(None, "--num-samples", "-n", help="Target sample count"),
+    force: bool = typer.Option(False, "--force", "-f", help="Regenerate even if samples.json exists"),
+):
+    """Phase 2: Stratified random sampling of wine list segments."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.manifest import load_manifest
+    from winerank.sft.page_sampler import save_samples, sample_segments
+    from winerank.sft.progress import ProgressTracker
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    if seed is not None or num_samples is not None:
+        settings = SFTSettings(
+            seed=seed if seed is not None else settings.seed,
+            num_samples=num_samples if num_samples is not None else settings.num_samples,
+        )
+
+    if settings.samples_file.exists() and not force:
+        console.print(f"[yellow]samples.json already exists. Use --force to regenerate.[/yellow]")
+        raise typer.Exit(0)
+
+    try:
+        manifest = load_manifest(settings.manifest_file)
+    except FileNotFoundError:
+        console.print("[bold red]Manifest not found. Run 'winerank sft init' first.[/bold red]")
+        raise typer.Exit(1)
+
+    progress = ProgressTracker(settings.progress_file)
+    not_a_list_ids = progress.get_not_a_list_ids()
+
+    console.print(
+        f"[bold blue]Sampling {settings.num_samples} segments "
+        f"(seed={settings.seed}, excluding {len(not_a_list_ids)} NOT_A_LIST)...[/bold blue]"
+    )
+
+    samples = sample_segments(
+        entries=manifest.lists,
+        not_a_list_ids=not_a_list_ids,
+        num_samples=settings.num_samples,
+        seed=settings.seed,
+        min_per_list=settings.min_segments_per_list,
+        min_chars=settings.min_segment_chars,
+    )
+    settings.ensure_dirs()
+    save_samples(samples, settings.samples_file)
+    console.print(f"[bold green]✓ {len(samples)} segments sampled → {settings.samples_file}[/bold green]")
+
+
+@sft_app.command("parse")
+def sft_parse(
+    teacher_model: Optional[str] = typer.Option(None, "--teacher-model", help="Override teacher model"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Input mode: vision or text"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed parses"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+):
+    """Phase 3: Parse wine entries from sampled segments using the Teacher model."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.page_sampler import load_samples
+    from winerank.sft.progress import ProgressTracker
+    from winerank.sft.wine_parser import parse_all_segments
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    if teacher_model or mode:
+        settings = SFTSettings(
+            teacher_model=teacher_model or settings.teacher_model,
+            training_data_mode=mode or settings.training_data_mode,
+        )
+
+    settings.ensure_dirs()
+
+    try:
+        samples = load_samples(settings.samples_file)
+    except FileNotFoundError:
+        console.print("[bold red]samples.json not found. Run 'winerank sft sample' first.[/bold red]")
+        raise typer.Exit(1)
+
+    progress = ProgressTracker(settings.progress_file)
+
+    console.print(
+        f"[bold blue]Parsing {len(samples)} segments with {settings.teacher_model} "
+        f"(mode={settings.training_data_mode})...[/bold blue]"
+    )
+    if dry_run:
+        console.print("[yellow]DRY RUN mode[/yellow]")
+
+    results = parse_all_segments(samples, settings=settings, progress=progress, force=force, dry_run=dry_run)
+    ok = sum(1 for r in results if not r.parse_error)
+    errors = sum(1 for r in results if r.parse_error)
+    console.print(f"[bold green]✓ Parsing complete: {ok} OK, {errors} errors[/bold green]")
+
+
+@sft_app.command("judge")
+def sft_judge(
+    judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Override judge model"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed reviews"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+):
+    """Phase 3.5: Run optional Judge model to score parsed segments."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.judge_reviewer import judge_all_segments
+    from winerank.sft.progress import ProgressTracker
+    from winerank.sft.wine_parser import load_all_parse_results
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    if judge_model:
+        settings = SFTSettings(judge_model=judge_model)
+
+    settings.ensure_dirs()
+    parse_results = load_all_parse_results(settings.parsed_dir)
+    if not parse_results:
+        console.print("[yellow]No parsed results found. Run 'winerank sft parse' first.[/yellow]")
+        raise typer.Exit(0)
+
+    progress = ProgressTracker(settings.progress_file)
+
+    console.print(
+        f"[bold blue]Running Judge on {len(parse_results)} segments with {settings.judge_model}...[/bold blue]"
+    )
+    if dry_run:
+        console.print("[yellow]DRY RUN mode[/yellow]")
+
+    results = judge_all_segments(parse_results, settings=settings, progress=progress, force=force, dry_run=dry_run)
+    accept = sum(1 for r in results if r.recommendation == "accept")
+    review = sum(1 for r in results if r.recommendation == "review")
+    reject = sum(1 for r in results if r.recommendation == "reject")
+    avg_score = sum(r.score for r in results) / len(results) if results else 0.0
+
+    console.print(f"[bold green]✓ Judge complete: accept={accept} review={review} reject={reject} avg_score={avg_score:.2f}[/bold green]")
+
+
+@sft_app.command("build")
+def sft_build(
+    min_judge_score: Optional[float] = typer.Option(None, "--min-judge-score", help="Minimum judge score to include (0.0-1.0)"),
+):
+    """Phase 4: Assemble final SFT-ready JSONL training dataset."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.dataset_builder import build_dataset
+    from winerank.sft.progress import ProgressTracker
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    settings.ensure_dirs()
+    progress = ProgressTracker(settings.progress_file)
+
+    console.print("[bold blue]Building training dataset...[/bold blue]")
+    jsonl_path = build_dataset(settings=settings, progress=progress, min_judge_score=min_judge_score)
+
+    from winerank.sft.dataset_builder import load_dataset_metadata
+    meta = load_dataset_metadata(settings.dataset_dir)
+    if meta:
+        console.print(f"[bold green]✓ Dataset built: {meta.num_samples_actual} samples → {jsonl_path}[/bold green]")
+        console.print(f"  Lists used: {meta.num_lists_used}")
+        console.print(f"  NOT_A_LIST filtered: {meta.not_a_list_count}")
+        console.print(f"  Judge filtered: {meta.judge_filtered_count}")
+
+
+@sft_app.command("run")
+def sft_run(
+    taxonomy_model: Optional[str] = typer.Option(None, "--taxonomy-model"),
+    teacher_model: Optional[str] = typer.Option(None, "--teacher-model"),
+    judge_model: Optional[str] = typer.Option(None, "--judge-model"),
+    mode: Optional[str] = typer.Option(None, "--mode"),
+    seed: Optional[int] = typer.Option(None, "--seed"),
+    num_samples: Optional[int] = typer.Option(None, "--num-samples", "-n"),
+    min_judge_score: Optional[float] = typer.Option(None, "--min-judge-score"),
+    skip_judge: bool = typer.Option(False, "--skip-judge", help="Skip the judge review phase"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run all phases"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+):
+    """Run the full SFT pipeline end-to-end (init → taxonomy → sample → parse → [judge] → build)."""
+    console.print("[bold blue]Running full SFT pipeline...[/bold blue]")
+
+    # Run each phase in sequence via Typer's invoke mechanism
+    from typer.testing import CliRunner as _R  # noqa: F401 - just for reference
+
+    # Call each sub-command function directly
+    from winerank.sft.config import SFTSettings
+    from winerank.sft.dataset_builder import build_dataset
+    from winerank.sft.judge_reviewer import judge_all_segments
+    from winerank.sft.manifest import generate_manifest, load_manifest, save_manifest
+    from winerank.sft.page_sampler import load_samples, sample_segments, save_samples
+    from winerank.sft.progress import ProgressTracker
+    from winerank.sft.taxonomy_extractor import extract_taxonomy_for_all
+    from winerank.sft.wine_parser import load_all_parse_results, parse_all_segments
+
+    settings_kwargs: dict = {}
+    if taxonomy_model:
+        settings_kwargs["taxonomy_model"] = taxonomy_model
+    if teacher_model:
+        settings_kwargs["teacher_model"] = teacher_model
+    if judge_model:
+        settings_kwargs["judge_model"] = judge_model
+    if mode:
+        settings_kwargs["training_data_mode"] = mode
+    if seed is not None:
+        settings_kwargs["seed"] = seed
+    if num_samples is not None:
+        settings_kwargs["num_samples"] = num_samples
+    if min_judge_score is not None:
+        settings_kwargs["min_judge_score"] = min_judge_score
+
+    settings = SFTSettings(**settings_kwargs)
+    settings.ensure_dirs()
+    progress = ProgressTracker(settings.progress_file)
+
+    if force:
+        progress.reset()
+
+    # Init manifest if not present
+    if not settings.manifest_file.exists():
+        examples_path = Path(settings.examples_dir)
+        if not examples_path.exists():
+            console.print(f"[bold red]Examples directory not found: {examples_path}[/bold red]")
+            raise typer.Exit(1)
+        manifest = generate_manifest(examples_path)
+        save_manifest(manifest, settings.manifest_file)
+        console.print(f"[green]✓ Manifest generated ({len(manifest.lists)} lists)[/green]")
+    else:
+        manifest = load_manifest(settings.manifest_file)
+
+    # Phase 1: Taxonomy
+    console.print("[blue]Phase 1: Extracting taxonomy...[/blue]")
+    extract_taxonomy_for_all(manifest.lists, settings=settings, progress=progress, force=force, dry_run=dry_run)
+
+    # Phase 2: Sample
+    console.print("[blue]Phase 2: Sampling segments...[/blue]")
+    not_a_list_ids = progress.get_not_a_list_ids()
+    samples = sample_segments(
+        entries=manifest.lists,
+        not_a_list_ids=not_a_list_ids,
+        num_samples=settings.num_samples,
+        seed=settings.seed,
+        min_per_list=settings.min_segments_per_list,
+        min_chars=settings.min_segment_chars,
+    )
+    save_samples(samples, settings.samples_file)
+
+    # Phase 3: Parse
+    console.print("[blue]Phase 3: Parsing segments...[/blue]")
+    parse_all_segments(samples, settings=settings, progress=progress, force=force, dry_run=dry_run)
+
+    # Phase 3.5: Judge (optional)
+    if not skip_judge:
+        console.print("[blue]Phase 3.5: Running judge review...[/blue]")
+        parse_results = load_all_parse_results(settings.parsed_dir)
+        judge_all_segments(parse_results, settings=settings, progress=progress, force=force, dry_run=dry_run)
+
+    # Phase 4: Build
+    console.print("[blue]Phase 4: Building dataset...[/blue]")
+    jsonl_path = build_dataset(settings=settings, progress=progress, min_judge_score=min_judge_score)
+
+    from winerank.sft.dataset_builder import load_dataset_metadata
+    meta = load_dataset_metadata(settings.dataset_dir)
+    if meta:
+        console.print(f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples → {jsonl_path}[/bold green]")
+
+
+@sft_app.command("stats")
+def sft_stats():
+    """Show dataset statistics and pipeline progress summary."""
+    from winerank.sft.config import get_sft_settings
+    from winerank.sft.dataset_builder import load_dataset_metadata
+    from winerank.sft.judge_reviewer import load_all_judge_results
+    from winerank.sft.progress import ProgressTracker
+
+    from winerank.sft.config import SFTSettings
+    settings = SFTSettings()
+    progress = ProgressTracker(settings.progress_file)
+    summary = progress.summary()
+    tokens = progress.total_tokens()
+
+    table = Table(title="SFT Pipeline Progress")
+    table.add_column("Phase", style="cyan")
+    table.add_column("OK", style="green")
+    table.add_column("Errors / Special", style="red")
+    table.add_column("Total", style="white")
+
+    tax = summary["taxonomy"]
+    table.add_row("Taxonomy", str(tax["ok"]), f"not_a_list={tax['not_a_list']} err={tax['error']}", str(tax["total"]))
+
+    parse = summary["parse"]
+    table.add_row("Parse", str(parse["ok"]), str(parse["error"]), str(parse["total"]))
+
+    judge = summary["judge"]
+    table.add_row("Judge", str(judge["ok"]), str(judge["error"]), str(judge["total"]))
+
+    console.print(table)
+
+    # Token stats
+    console.print(f"\n[bold]Token Usage:[/bold]")
+    console.print(f"  Input tokens:  {tokens['input']:,}")
+    console.print(f"  Output tokens: {tokens['output']:,}")
+    console.print(f"  Cached tokens: {tokens['cached']:,}")
+
+    # Judge distribution
+    judge_results = load_all_judge_results(settings.judged_dir)
+    if judge_results:
+        accept = sum(1 for r in judge_results.values() if r.recommendation == "accept")
+        review = sum(1 for r in judge_results.values() if r.recommendation == "review")
+        reject = sum(1 for r in judge_results.values() if r.recommendation == "reject")
+        avg_score = sum(r.score for r in judge_results.values()) / len(judge_results)
+        console.print(f"\n[bold]Judge Results:[/bold]")
+        console.print(f"  Accept: {accept} | Review: {review} | Reject: {reject}")
+        console.print(f"  Average score: {avg_score:.3f}")
+
+    # Dataset metadata
+    meta = load_dataset_metadata(settings.dataset_dir)
+    if meta:
+        console.print(f"\n[bold]Dataset:[/bold]")
+        console.print(f"  Samples: {meta.num_samples_actual} (target: {meta.num_samples_target})")
+        console.print(f"  Lists used: {meta.num_lists_used}")
+        console.print(f"  Generated at: {meta.generated_at}")
+        console.print(f"  Teacher model: {meta.teacher_model}")
+        console.print(f"  Mode: {meta.training_data_mode}")
 
 
 if __name__ == "__main__":

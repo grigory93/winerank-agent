@@ -34,6 +34,7 @@ from winerank.db_manager.pages import (  # noqa: E402
     jobs,
     reports,
     restaurants,
+    sft_review,
     sites_of_record,
     wine_lists,
     wines,
@@ -52,6 +53,12 @@ pg = st.navigation(
             title="Sites of Record",
             icon="\U0001f310",
             url_path="sites",
+        ),
+        st.Page(
+            sft_review.render,
+            title="SFT Training Review",
+            icon="\U0001f9d1\u200d\U0001f3eb",
+            url_path="sft-review",
         ),
     ]
 )

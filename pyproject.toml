@@ -27,6 +27,10 @@ dependencies = [
     "lxml>=5.0",
     # LLM (optional, for future crawler navigation)
     "litellm>=1.40",
+    # SFT: PDF page-to-image rendering (vision mode)
+    "pdf2image>=1.17",
+    # SFT: YAML manifest support
+    "pyyaml>=6.0",
     # BinWise fallback search
     "googlesearch-python>=1.3",
     # Testing
