@@ -23,11 +23,12 @@ class SFTSettings(BaseSettings):
         description="Cheap LLM for wine list validation and taxonomy extraction",
     )
     teacher_model: str = Field(
-        default="claude-opus-4-5",
+        # default="claude-opus-4-5",
+        default="gpt-5.2",
         description="Powerful LLM for gold-pass wine parsing",
     )
     judge_model: str = Field(
-        default="claude-opus-4-5",
+        default="claude-opus-4-6",
         description="Powerful LLM for optional judge review pass",
     )
 
@@ -69,6 +70,20 @@ class SFTSettings(BaseSettings):
     min_judge_score: float = Field(
         default=0.0,
         description="Minimum judge score for sample inclusion in final dataset (0.0 = include all)",
+    )
+
+    # Batch execution options
+    batch_mode: bool = Field(
+        default=False,
+        description=(
+            "Use provider-native batch APIs for 50%% cost reduction. "
+            "Async -- may take up to 24h. "
+            "Env: WINERANK_SFT_BATCH_MODE=true"
+        ),
+    )
+    batch_timeout: int = Field(
+        default=7200,
+        description="Max seconds to wait for a batch to complete (default 2 hours)",
     )
 
     @field_validator("training_data_mode", mode="before")

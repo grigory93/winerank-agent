@@ -2,9 +2,9 @@
 Judge reviewer: optional LLM pass to review and score parsed wine segments.
 
 For each parsed segment:
-1. Send original text + taxonomy + parsed JSON to the Judge model
-2. Judge returns score (0-1), wine_count_match, issues list, recommendation
-3. Results saved to data/sft/judged/<list_id>__<segment_index>.json
+1. Build an LLMRequest with original text + taxonomy + parsed JSON (prepare phase)
+2. Executor sends requests to the Judge model (execute phase)
+3. Parse responses into JudgeResult, save to data/sft/judged/ (process phase)
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from winerank.sft.config import SFTSettings
+from winerank.sft.executor.types import LLMRequest, LLMResponse
 from winerank.sft.progress import ProgressTracker
 from winerank.sft.prompts import build_judge_messages
 from winerank.sft.schemas import JudgeResult, PageParseResult
@@ -21,30 +22,129 @@ from winerank.sft.schemas import JudgeResult, PageParseResult
 logger = logging.getLogger(__name__)
 
 
-def _call_judge_model(
-    messages: list[dict],
-    model: str,
-    max_tokens: int = 2048,
-) -> tuple[str, dict[str, int]]:
-    """Call the judge model and return raw response + token counts."""
-    import litellm  # type: ignore[import-untyped]
+# ---------------------------------------------------------------------------
+# Request preparation
+# ---------------------------------------------------------------------------
 
-    response = litellm.completion(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-    raw_text: str = response.choices[0].message.content or ""
-    usage = response.usage or {}
-    tokens = {
-        "input": getattr(usage, "prompt_tokens", 0),
-        "output": getattr(usage, "completion_tokens", 0),
-        "cached": 0,
-    }
-    return raw_text, tokens
+def prepare_judge_requests(
+    parse_results: list[PageParseResult],
+    settings: SFTSettings,
+    progress: ProgressTracker,
+    force: bool = False,
+) -> list[LLMRequest]:
+    """
+    Build LLMRequest objects for the judge review phase.
 
+    Skips segments that already have judge results (unless force=True) and
+    segments that have parse errors (they would not be useful training data).
+
+    Args:
+        parse_results: Parsed segment results from the Teacher model.
+        settings: SFT configuration (judge model name, etc.).
+        progress: Progress tracker for resume support.
+        force: Re-run even if already completed.
+
+    Returns:
+        List of LLMRequest objects ready for executor.execute().
+    """
+    requests: list[LLMRequest] = []
+
+    for parse_result in parse_results:
+        list_id = parse_result.list_id
+        seg_idx = parse_result.segment_index
+
+        if not force and progress.is_judge_done(list_id, seg_idx):
+            logger.debug("[%s] Segment %d already judged, skipping", list_id, seg_idx)
+            continue
+
+        if parse_result.parse_error:
+            logger.warning("[%s] Segment %d has parse error, skipping judge", list_id, seg_idx)
+            continue
+
+        parsed_json = json.dumps(
+            {"wines": [w.model_dump() for w in parse_result.wines]}, indent=2
+        )
+        messages = build_judge_messages(
+            segment_text=parse_result.segment_text,
+            taxonomy_text=parse_result.taxonomy_text,
+            parsed_json=parsed_json,
+        )
+        requests.append(LLMRequest(
+            custom_id=f"judge__{list_id}__{seg_idx}",
+            model=settings.judge_model,
+            messages=messages,
+            max_tokens=2048,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        ))
+
+    return requests
+
+
+# ---------------------------------------------------------------------------
+# Response processing
+# ---------------------------------------------------------------------------
+
+def process_judge_responses(
+    responses: list[LLMResponse],
+    settings: SFTSettings,
+    progress: ProgressTracker,
+) -> list[JudgeResult]:
+    """
+    Parse executor responses into JudgeResult objects and persist them.
+
+    Args:
+        responses: LLMResponse objects from executor.execute().
+        settings: SFT configuration.
+        progress: Progress tracker to update.
+
+    Returns:
+        List of successfully parsed JudgeResult objects.
+    """
+    results: list[JudgeResult] = []
+
+    for response in responses:
+        # custom_id format: "judge__<list_id>__<seg_idx>"
+        _, list_id, seg_idx_str = response.custom_id.split("__", 2)
+        seg_idx = int(seg_idx_str)
+        segment_id = f"{list_id}__{seg_idx}"
+
+        if response.error:
+            logger.error("[%s] Judge executor error for seg %d: %s",
+                         list_id, seg_idx, response.error)
+            progress.mark_judge_done(list_id, seg_idx, error=response.error)
+            continue
+
+        try:
+            judge_result = _parse_judge_response(
+                raw_text=response.content,
+                segment_id=segment_id,
+                list_id=list_id,
+                segment_index=seg_idx,
+                model=settings.judge_model,
+            )
+            judge_result.input_tokens = response.tokens.get("input", 0)
+            judge_result.output_tokens = response.tokens.get("output", 0)
+        except Exception as exc:
+            logger.error("[%s] Judge response parse error for seg %d: %s",
+                         list_id, seg_idx, exc)
+            progress.mark_judge_done(list_id, seg_idx, error=str(exc))
+            continue
+
+        save_judge_result(judge_result, settings.judged_dir)
+        progress.mark_judge_done(list_id, seg_idx, tokens=response.tokens)
+        logger.info(
+            "[%s] Segment %d: judge score=%.2f recommendation=%s",
+            list_id, seg_idx, judge_result.score, judge_result.recommendation,
+        )
+        results.append(judge_result)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Internal parsing
+# ---------------------------------------------------------------------------
 
 def _parse_judge_response(
     raw_text: str,
@@ -56,8 +156,10 @@ def _parse_judge_response(
     """Parse the raw JSON response from the judge model into a JudgeResult."""
     try:
         data = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Judge returned invalid JSON: {e}\nRaw: {raw_text[:500]}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Judge returned invalid JSON: {exc}\nRaw: {raw_text[:500]}"
+        ) from exc
 
     return JudgeResult(
         segment_id=segment_id,
@@ -72,82 +174,16 @@ def _parse_judge_response(
     )
 
 
-def judge_segment(
-    parse_result: PageParseResult,
-    settings: SFTSettings,
-    progress: ProgressTracker,
-    force: bool = False,
-    dry_run: bool = False,
-) -> Optional[JudgeResult]:
-    """
-    Run judge review for a single parsed segment.
-
-    Args:
-        parse_result: The Teacher's parsed result for this segment.
-        settings: SFT settings.
-        progress: ProgressTracker instance.
-        force: Re-run even if already completed.
-        dry_run: Show what would happen without LLM calls.
-
-    Returns:
-        JudgeResult, or None on error/skip.
-    """
-    list_id = parse_result.list_id
-    seg_idx = parse_result.segment_index
-    segment_id = parse_result.segment_id
-
-    if not force and progress.is_judge_done(list_id, seg_idx):
-        logger.info("[%s] Segment %d already judged, skipping", list_id, seg_idx)
-        return load_judge_result(settings.judged_dir, list_id, seg_idx)
-
-    # Skip segments with parse errors
-    if parse_result.parse_error:
-        logger.warning("[%s] Segment %d has parse error, skipping judge", list_id, seg_idx)
-        return None
-
-    if dry_run:
-        logger.info("[%s] DRY RUN: would call %s for judge on segment %d",
-                    list_id, settings.judge_model, seg_idx)
-        return None
-
-    parsed_json = json.dumps({"wines": [w.model_dump() for w in parse_result.wines]}, indent=2)
-    messages = build_judge_messages(
-        segment_text=parse_result.segment_text,
-        taxonomy_text=parse_result.taxonomy_text,
-        parsed_json=parsed_json,
-    )
-
-    try:
-        raw_text, tokens = _call_judge_model(messages, model=settings.judge_model)
-        judge_result = _parse_judge_response(
-            raw_text=raw_text,
-            segment_id=segment_id,
-            list_id=list_id,
-            segment_index=seg_idx,
-            model=settings.judge_model,
-        )
-        judge_result.input_tokens = tokens.get("input", 0)
-        judge_result.output_tokens = tokens.get("output", 0)
-    except Exception as e:
-        logger.error("[%s] Judge model call failed for segment %d: %s", list_id, seg_idx, e)
-        progress.mark_judge_done(list_id, seg_idx, error=str(e))
-        return None
-
-    save_judge_result(judge_result, settings.judged_dir)
-    progress.mark_judge_done(list_id, seg_idx, tokens=tokens)
-    logger.info(
-        "[%s] Segment %d: judge score=%.2f recommendation=%s",
-        list_id, seg_idx, judge_result.score, judge_result.recommendation,
-    )
-    return judge_result
-
+# ---------------------------------------------------------------------------
+# Persistence helpers
+# ---------------------------------------------------------------------------
 
 def save_judge_result(result: JudgeResult, judged_dir: Path) -> Path:
     """Save a JudgeResult to the judged directory."""
     judged_dir.mkdir(parents=True, exist_ok=True)
     out_path = judged_dir / f"{result.segment_id}.json"
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result.model_dump(), f, indent=2, ensure_ascii=False)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result.model_dump(), fh, indent=2, ensure_ascii=False)
     return out_path
 
 
@@ -160,8 +196,8 @@ def load_judge_result(
     path = judged_dir / f"{list_id}__{segment_index}.json"
     if not path.exists():
         return None
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
     return JudgeResult(**data)
 
 
@@ -172,14 +208,18 @@ def load_all_judge_results(judged_dir: Path) -> dict[str, JudgeResult]:
         return results
     for p in sorted(judged_dir.glob("*.json")):
         try:
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
             result = JudgeResult(**data)
             results[result.segment_id] = result
-        except Exception as e:
-            logger.warning("Failed to load judge result %s: %s", p, e)
+        except Exception as exc:
+            logger.warning("Failed to load judge result %s: %s", p, exc)
     return results
 
+
+# ---------------------------------------------------------------------------
+# Convenience wrapper (backward-compatible for individual commands)
+# ---------------------------------------------------------------------------
 
 def judge_all_segments(
     parse_results: list[PageParseResult],
@@ -189,27 +229,41 @@ def judge_all_segments(
     dry_run: bool = False,
 ) -> list[JudgeResult]:
     """
-    Run judge review on all parsed segments.
+    Run judge review on all parsed segments using SyncExecutor.
 
-    Args:
-        parse_results: All Teacher-parsed segment results.
-        settings: SFT settings.
-        progress: ProgressTracker instance.
-        force: Re-run already-completed judgements.
-        dry_run: Show what would happen without LLM calls.
-
-    Returns:
-        List of JudgeResult objects.
+    Convenience wrapper for the `sft judge` command and backward compatibility.
+    The full `sft run` orchestration uses prepare/execute/process directly.
     """
-    results = []
+    from winerank.sft.executor.sync import SyncExecutor
+
+    # Pre-load already-completed results
+    completed = []
+    pending = []
     for parse_result in parse_results:
-        result = judge_segment(
-            parse_result=parse_result,
-            settings=settings,
-            progress=progress,
-            force=force,
-            dry_run=dry_run,
-        )
-        if result is not None:
-            results.append(result)
-    return results
+        list_id = parse_result.list_id
+        seg_idx = parse_result.segment_index
+        if not force and progress.is_judge_done(list_id, seg_idx):
+            r = load_judge_result(settings.judged_dir, list_id, seg_idx)
+            if r:
+                completed.append(r)
+        else:
+            pending.append(parse_result)
+
+    if dry_run:
+        for pr in pending:
+            if not pr.parse_error:
+                logger.info("[%s] DRY RUN: would call %s for judge on segment %d",
+                            pr.list_id, settings.judge_model, pr.segment_index)
+        return completed
+
+    if not pending:
+        return completed
+
+    requests = prepare_judge_requests(pending, settings, progress, force=force)
+    if not requests:
+        return completed
+
+    executor = SyncExecutor()
+    responses = executor.execute(requests)
+    new_results = process_judge_responses(responses, settings, progress)
+    return completed + new_results

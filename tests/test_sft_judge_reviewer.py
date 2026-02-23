@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from winerank.sft.judge_reviewer import (
-    judge_segment,
+    judge_all_segments,
     load_all_judge_results,
     load_judge_result,
     save_judge_result,
@@ -60,84 +60,98 @@ def progress(tmp_path):
     return ProgressTracker(tmp_path / "sft" / "progress.json")
 
 
+def _make_litellm_response(content: str):
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock()]
+    mock_resp.choices[0].message.content = content
+    mock_resp.usage = MagicMock()
+    mock_resp.usage.prompt_tokens = 300
+    mock_resp.usage.completion_tokens = 50
+    mock_resp.usage.cache_read_input_tokens = 0
+    mock_resp.usage.prompt_tokens_details = None
+    return mock_resp
+
+
 # ---------------------------------------------------------------------------
-# judge_segment
+# judge_all_segments (uses SyncExecutor -- LLM mocked at litellm level)
 # ---------------------------------------------------------------------------
 
 
-def test_judge_segment_ok(parse_result, sft_settings, progress):
+def test_judge_all_segments_ok(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        mock_call.return_value = (JUDGE_RESPONSE, {"input": 300, "output": 50, "cached": 0})
-        result = judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_litellm_response(JUDGE_RESPONSE)
+        results = judge_all_segments([parse_result], sft_settings, progress)
 
-    assert result is not None
-    assert result.score == 0.95
-    assert result.recommendation == "accept"
-    assert result.wine_count_match is True
-    assert result.issues == []
+    assert len(results) == 1
+    assert results[0].score == 0.95
+    assert results[0].recommendation == "accept"
+    assert results[0].wine_count_match is True
+    assert results[0].issues == []
 
 
-def test_judge_segment_with_issues(parse_result, sft_settings, progress):
+def test_judge_all_segments_with_issues(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        mock_call.return_value = (JUDGE_RESPONSE_ISSUES, {"input": 300, "output": 80, "cached": 0})
-        result = judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_litellm_response(JUDGE_RESPONSE_ISSUES)
+        results = judge_all_segments([parse_result], sft_settings, progress)
 
-    assert result is not None
-    assert result.score == 0.6
-    assert result.recommendation == "review"
-    assert len(result.issues) == 2
+    assert results[0].score == 0.6
+    assert results[0].recommendation == "review"
+    assert len(results[0].issues) == 2
 
 
-def test_judge_segment_original_text_in_prompt(parse_result, sft_settings, progress):
+def test_judge_all_segments_original_text_in_prompt(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
     captured_messages = []
 
-    def fake_call(messages, model, **kwargs):
-        captured_messages.extend(messages)
-        return (JUDGE_RESPONSE, {"input": 300, "output": 50, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return _make_litellm_response(JUDGE_RESPONSE)
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model", side_effect=fake_call):
-        judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.side_effect = fake_completion
+        judge_all_segments([parse_result], sft_settings, progress)
 
-    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
     assert "Krug NV $450" in user_msg["content"]
 
 
-def test_judge_segment_taxonomy_in_prompt(parse_result, sft_settings, progress):
+def test_judge_all_segments_taxonomy_in_prompt(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
     captured_messages = []
 
-    def fake_call(messages, model, **kwargs):
-        captured_messages.extend(messages)
-        return (JUDGE_RESPONSE, {"input": 300, "output": 50, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return _make_litellm_response(JUDGE_RESPONSE)
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model", side_effect=fake_call):
-        judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.side_effect = fake_completion
+        judge_all_segments([parse_result], sft_settings, progress)
 
-    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
     assert "Champagne" in user_msg["content"]
 
 
-def test_judge_segment_parsed_json_in_prompt(parse_result, sft_settings, progress):
+def test_judge_all_segments_parsed_json_in_prompt(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
     captured_messages = []
 
-    def fake_call(messages, model, **kwargs):
-        captured_messages.extend(messages)
-        return (JUDGE_RESPONSE, {"input": 300, "output": 50, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return _make_litellm_response(JUDGE_RESPONSE)
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model", side_effect=fake_call):
-        judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.side_effect = fake_completion
+        judge_all_segments([parse_result], sft_settings, progress)
 
-    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
     assert "Krug Grande Cuvee" in user_msg["content"]
 
 
-def test_judge_segment_skips_if_done(parse_result, sft_settings, progress, tmp_path):
+def test_judge_all_segments_skips_if_done(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
     existing = JudgeResult(
         segment_id="test-list__2",
@@ -151,13 +165,13 @@ def test_judge_segment_skips_if_done(parse_result, sft_settings, progress, tmp_p
     save_judge_result(existing, sft_settings.judged_dir)
     progress.mark_judge_done("test-list", 2)
 
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        result = judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        judge_all_segments([parse_result], sft_settings, progress)
 
-    mock_call.assert_not_called()
+    mock_litellm.completion.assert_not_called()
 
 
-def test_judge_segment_skips_parse_errors(sft_settings, progress):
+def test_judge_all_segments_skips_parse_errors(sft_settings, progress):
     sft_settings.ensure_dirs()
     errored_result = PageParseResult(
         segment_id="test-list__3",
@@ -169,30 +183,29 @@ def test_judge_segment_skips_parse_errors(sft_settings, progress):
         wines=[],
         parse_error="Model returned invalid JSON",
     )
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        result = judge_segment(errored_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        results = judge_all_segments([errored_result], sft_settings, progress)
 
-    mock_call.assert_not_called()
-    assert result is None
+    mock_litellm.completion.assert_not_called()
+    assert results == []
 
 
-def test_judge_segment_dry_run(parse_result, sft_settings, progress):
+def test_judge_all_segments_dry_run(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        result = judge_segment(parse_result, sft_settings, progress, dry_run=True)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        results = judge_all_segments([parse_result], sft_settings, progress, dry_run=True)
 
-    mock_call.assert_not_called()
-    assert result is None
+    mock_litellm.completion.assert_not_called()
+    assert results == []
 
 
-def test_judge_segment_handles_model_error(parse_result, sft_settings, progress):
+def test_judge_all_segments_handles_model_error(parse_result, sft_settings, progress):
     sft_settings.ensure_dirs()
-    with patch("winerank.sft.judge_reviewer._call_judge_model") as mock_call:
-        mock_call.side_effect = Exception("API failure")
-        result = judge_segment(parse_result, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        mock_litellm.completion.side_effect = Exception("API failure")
+        results = judge_all_segments([parse_result], sft_settings, progress)
 
-    assert result is None
-    assert progress.is_judge_done("test-list", 2) is False
+    assert results == []
 
 
 # ---------------------------------------------------------------------------

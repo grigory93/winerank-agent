@@ -9,7 +9,7 @@ from winerank.sft.manifest import ManifestEntry
 from winerank.sft.schemas import TaxonomyResult
 from winerank.sft.taxonomy_extractor import (
     _parse_taxonomy_response,
-    extract_taxonomy_for_list,
+    extract_taxonomy_for_all,
     load_taxonomy,
     save_taxonomy,
 )
@@ -82,7 +82,7 @@ def test_load_taxonomy_not_found(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# extract_taxonomy_for_list (LLM mocked)
+# extract_taxonomy_for_all via SyncExecutor (LLM mocked at litellm level)
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ def progress(tmp_path):
     return ProgressTracker(tmp_path / "sft" / "progress.json")
 
 
-def test_extract_taxonomy_ok(taxonomy_entry, sft_settings, progress, tmp_path):
+def test_extract_taxonomy_ok(taxonomy_entry, sft_settings, progress):
     ok_response = json.dumps({
         "status": "OK",
         "restaurant_name": "Test Restaurant",
@@ -134,13 +134,14 @@ def test_extract_taxonomy_ok(taxonomy_entry, sft_settings, progress, tmp_path):
     })
     sft_settings.ensure_dirs()
 
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model") as mock_call, \
-         patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract:
+    with patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract, \
+         patch("winerank.sft.executor.sync.litellm") as mock_litellm:
         mock_extract.return_value = "Sample wine list text with lots of wines"
-        mock_call.return_value = (ok_response, {"input": 100, "output": 50, "cached": 0})
+        mock_litellm.completion.return_value = _make_litellm_response(ok_response)
 
-        result = extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress)
+        results = extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress)
 
+    result = results.get("test-list")
     assert result is not None
     assert result.status == "OK"
     assert result.categories[0].name == "Champagne"
@@ -151,13 +152,14 @@ def test_extract_taxonomy_not_a_list(taxonomy_entry, sft_settings, progress):
     not_a_list_response = json.dumps({"status": "NOT_A_LIST"})
     sft_settings.ensure_dirs()
 
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model") as mock_call, \
-         patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract:
+    with patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract, \
+         patch("winerank.sft.executor.sync.litellm") as mock_litellm:
         mock_extract.return_value = "This is a food menu, not a wine list"
-        mock_call.return_value = (not_a_list_response, {"input": 80, "output": 10, "cached": 0})
+        mock_litellm.completion.return_value = _make_litellm_response(not_a_list_response)
 
-        result = extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress)
+        results = extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress)
 
+    result = results.get("test-list")
     assert result is not None
     assert result.status == "NOT_A_LIST"
     assert progress.get_taxonomy_status("test-list") == "NOT_A_LIST"
@@ -165,60 +167,60 @@ def test_extract_taxonomy_not_a_list(taxonomy_entry, sft_settings, progress):
 
 def test_extract_taxonomy_uses_full_text(taxonomy_entry, sft_settings, progress):
     sft_settings.ensure_dirs()
-    captured_text = []
+    captured_prompts = []
 
-    def fake_call(full_text, model, **kwargs):
-        captured_text.append(full_text)
-        return (json.dumps({"status": "OK", "categories": []}), {"input": 10, "output": 5, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_prompts.append(kwargs["messages"])
+        return _make_litellm_response(json.dumps({"status": "OK", "categories": []}))
 
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model", side_effect=fake_call), \
-         patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract:
+    with patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract, \
+         patch("winerank.sft.executor.sync.litellm") as mock_litellm:
         mock_extract.return_value = "the full wine list text here"
-        extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress)
+        mock_litellm.completion.side_effect = fake_completion
+        extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress)
 
-    assert len(captured_text) == 1
-    assert "the full wine list text here" in captured_text[0]
+    assert len(captured_prompts) == 1
+    user_content = captured_prompts[0][1]["content"]
+    assert "the full wine list text here" in user_content
 
 
 def test_extract_taxonomy_uses_correct_model(taxonomy_entry, sft_settings, progress):
     sft_settings.ensure_dirs()
-    captured_models = []
 
-    def fake_call(full_text, model, **kwargs):
-        captured_models.append(model)
-        return (json.dumps({"status": "OK", "categories": []}), {"input": 10, "output": 5, "cached": 0})
-
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model", side_effect=fake_call), \
-         patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract:
+    with patch("winerank.sft.taxonomy_extractor.extract_fulltext") as mock_extract, \
+         patch("winerank.sft.executor.sync.litellm") as mock_litellm:
         mock_extract.return_value = "wine list text"
-        extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress)
+        mock_litellm.completion.return_value = _make_litellm_response(
+            json.dumps({"status": "OK", "categories": []})
+        )
+        extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress)
 
-    assert captured_models[0] == sft_settings.taxonomy_model
+    call_kwargs = mock_litellm.completion.call_args[1]
+    assert call_kwargs["model"] == sft_settings.taxonomy_model
 
 
-def test_extract_taxonomy_skips_if_done(taxonomy_entry, sft_settings, progress, tmp_path):
+def test_extract_taxonomy_skips_if_done(taxonomy_entry, sft_settings, progress):
     """Should skip if already completed (unless force=True)."""
     sft_settings.ensure_dirs()
     from winerank.sft.schemas import TaxonomyNode
-    # Pre-mark as done and save result
     existing = TaxonomyResult(status="OK", categories=[TaxonomyNode(name="ExistingCat")])
     save_taxonomy(existing, sft_settings.taxonomy_dir, "test-list")
     progress.mark_taxonomy_done("test-list", "OK")
 
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model") as mock_call:
-        result = extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        results = extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress)
 
-    mock_call.assert_not_called()
-    assert result is not None
+    mock_litellm.completion.assert_not_called()
+    assert results.get("test-list") is not None
 
 
 def test_extract_taxonomy_dry_run(taxonomy_entry, sft_settings, progress):
     sft_settings.ensure_dirs()
-    with patch("winerank.sft.taxonomy_extractor._call_taxonomy_model") as mock_call:
-        result = extract_taxonomy_for_list(taxonomy_entry, sft_settings, progress, dry_run=True)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        results = extract_taxonomy_for_all([taxonomy_entry], sft_settings, progress, dry_run=True)
 
-    mock_call.assert_not_called()
-    assert result is None
+    mock_litellm.completion.assert_not_called()
+    assert results.get("test-list") is None
 
 
 def test_extract_taxonomy_file_not_found(sft_settings, progress):
@@ -229,6 +231,6 @@ def test_extract_taxonomy_file_not_found(sft_settings, progress):
         file_path="/nonexistent/file.pdf",
         file_type="pdf",
     )
-    result = extract_taxonomy_for_list(entry, sft_settings, progress)
-    assert result is None
+    results = extract_taxonomy_for_all([entry], sft_settings, progress)
+    assert results.get("missing") is None
     assert progress.get_taxonomy_status("missing") == "ERROR"

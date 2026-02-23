@@ -474,6 +474,7 @@ def _sft_settings_override(
     seed: Optional[int],
     num_samples: Optional[int],
     min_judge_score: Optional[float],
+    batch: Optional[bool] = None,
 ):
     """Load SFT settings and apply any CLI overrides."""
     from winerank.sft.config import SFTSettings
@@ -493,6 +494,8 @@ def _sft_settings_override(
         kwargs["num_samples"] = num_samples
     if min_judge_score is not None:
         kwargs["min_judge_score"] = min_judge_score
+    if batch is not None:
+        kwargs["batch_mode"] = batch
     return SFTSettings(**kwargs)
 
 
@@ -539,17 +542,21 @@ def sft_extract_taxonomy(
     taxonomy_model: Optional[str] = typer.Option(None, "--taxonomy-model", help="Override taxonomy model"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed extractions"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+    batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
+    limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Process only first N wine lists (for testing)"),
 ):
     """Phase 1: Validate wine lists and extract taxonomy for all entries."""
-    from winerank.sft.config import get_sft_settings
+    from winerank.sft.config import SFTSettings
     from winerank.sft.manifest import load_manifest
     from winerank.sft.progress import ProgressTracker
     from winerank.sft.taxonomy_extractor import extract_taxonomy_for_all
 
-    from winerank.sft.config import SFTSettings
     settings = SFTSettings()
-    if taxonomy_model:
-        settings = SFTSettings(taxonomy_model=taxonomy_model)
+    if taxonomy_model or batch is not None:
+        settings = SFTSettings(
+            taxonomy_model=taxonomy_model or settings.taxonomy_model,
+            batch_mode=batch if batch is not None else settings.batch_mode,
+        )
 
     settings.ensure_dirs()
 
@@ -559,16 +566,21 @@ def sft_extract_taxonomy(
         console.print("[bold red]Manifest not found. Run 'winerank sft init' first.[/bold red]")
         raise typer.Exit(1)
 
+    entries = manifest.lists[:limit] if limit else manifest.lists
     progress = ProgressTracker(settings.progress_file)
     if force:
         progress.reset()
 
-    console.print(f"[bold blue]Extracting taxonomy for {len(manifest.lists)} wine lists...[/bold blue]")
+    batch_label = " [batch mode]" if settings.batch_mode else ""
+    limit_label = f" (limited to {limit})" if limit else ""
+    console.print(
+        f"[bold blue]Extracting taxonomy for {len(entries)} wine lists{limit_label}{batch_label}...[/bold blue]"
+    )
     if dry_run:
         console.print("[yellow]DRY RUN mode - no LLM calls will be made[/yellow]")
 
     results = extract_taxonomy_for_all(
-        manifest.lists,
+        entries,
         settings=settings,
         progress=progress,
         force=force,
@@ -579,7 +591,7 @@ def sft_extract_taxonomy(
     not_list = sum(1 for r in results.values() if r and r.status == "NOT_A_LIST")
     errors = sum(1 for r in results.values() if r is None)
 
-    console.print(f"[bold green]✓ Taxonomy extraction complete[/bold green]")
+    console.print("[bold green]✓ Taxonomy extraction complete[/bold green]")
     console.print(f"  OK: {ok} | NOT_A_LIST: {not_list} | Errors: {errors}")
 
 
@@ -588,14 +600,14 @@ def sft_sample(
     seed: Optional[int] = typer.Option(None, "--seed", help="Random seed"),
     num_samples: Optional[int] = typer.Option(None, "--num-samples", "-n", help="Target sample count"),
     force: bool = typer.Option(False, "--force", "-f", help="Regenerate even if samples.json exists"),
+    limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Only sample from first N wine lists (for testing)"),
 ):
     """Phase 2: Stratified random sampling of wine list segments."""
-    from winerank.sft.config import get_sft_settings
+    from winerank.sft.config import SFTSettings
     from winerank.sft.manifest import load_manifest
     from winerank.sft.page_sampler import save_samples, sample_segments
     from winerank.sft.progress import ProgressTracker
 
-    from winerank.sft.config import SFTSettings
     settings = SFTSettings()
     if seed is not None or num_samples is not None:
         settings = SFTSettings(
@@ -604,7 +616,7 @@ def sft_sample(
         )
 
     if settings.samples_file.exists() and not force:
-        console.print(f"[yellow]samples.json already exists. Use --force to regenerate.[/yellow]")
+        console.print("[yellow]samples.json already exists. Use --force to regenerate.[/yellow]")
         raise typer.Exit(0)
 
     try:
@@ -616,15 +628,24 @@ def sft_sample(
     progress = ProgressTracker(settings.progress_file)
     not_a_list_ids = progress.get_not_a_list_ids()
 
+    entries = manifest.lists[:limit] if limit else manifest.lists
+    limit_label = f" (limited to first {limit} lists)" if limit else ""
+    # When limit is set, scale num_samples so per-list allocation stays the same
+    total_lists = len(manifest.lists)
+    effective_num_samples = (
+        max(1, round(settings.num_samples * len(entries) / total_lists))
+        if limit and total_lists > 0
+        else settings.num_samples
+    )
     console.print(
-        f"[bold blue]Sampling {settings.num_samples} segments "
-        f"(seed={settings.seed}, excluding {len(not_a_list_ids)} NOT_A_LIST)...[/bold blue]"
+        f"[bold blue]Sampling {effective_num_samples} segments from {len(entries)} lists"
+        f"{limit_label} (seed={settings.seed})...[/bold blue]"
     )
 
     samples = sample_segments(
-        entries=manifest.lists,
+        entries=entries,
         not_a_list_ids=not_a_list_ids,
-        num_samples=settings.num_samples,
+        num_samples=effective_num_samples,
         seed=settings.seed,
         min_per_list=settings.min_segments_per_list,
         min_chars=settings.min_segment_chars,
@@ -640,19 +661,20 @@ def sft_parse(
     mode: Optional[str] = typer.Option(None, "--mode", help="Input mode: vision or text"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed parses"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+    batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
 ):
     """Phase 3: Parse wine entries from sampled segments using the Teacher model."""
-    from winerank.sft.config import get_sft_settings
+    from winerank.sft.config import SFTSettings
     from winerank.sft.page_sampler import load_samples
     from winerank.sft.progress import ProgressTracker
     from winerank.sft.wine_parser import parse_all_segments
 
-    from winerank.sft.config import SFTSettings
     settings = SFTSettings()
-    if teacher_model or mode:
+    if teacher_model or mode or batch is not None:
         settings = SFTSettings(
             teacher_model=teacher_model or settings.teacher_model,
             training_data_mode=mode or settings.training_data_mode,
+            batch_mode=batch if batch is not None else settings.batch_mode,
         )
 
     settings.ensure_dirs()
@@ -665,9 +687,10 @@ def sft_parse(
 
     progress = ProgressTracker(settings.progress_file)
 
+    batch_label = " [batch mode]" if settings.batch_mode else ""
     console.print(
         f"[bold blue]Parsing {len(samples)} segments with {settings.teacher_model} "
-        f"(mode={settings.training_data_mode})...[/bold blue]"
+        f"(mode={settings.training_data_mode}){batch_label}...[/bold blue]"
     )
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
@@ -683,17 +706,20 @@ def sft_judge(
     judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Override judge model"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed reviews"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+    batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
 ):
     """Phase 3.5: Run optional Judge model to score parsed segments."""
-    from winerank.sft.config import get_sft_settings
+    from winerank.sft.config import SFTSettings
     from winerank.sft.judge_reviewer import judge_all_segments
     from winerank.sft.progress import ProgressTracker
     from winerank.sft.wine_parser import load_all_parse_results
 
-    from winerank.sft.config import SFTSettings
     settings = SFTSettings()
-    if judge_model:
-        settings = SFTSettings(judge_model=judge_model)
+    if judge_model or batch is not None:
+        settings = SFTSettings(
+            judge_model=judge_model or settings.judge_model,
+            batch_mode=batch if batch is not None else settings.batch_mode,
+        )
 
     settings.ensure_dirs()
     parse_results = load_all_parse_results(settings.parsed_dir)
@@ -703,8 +729,9 @@ def sft_judge(
 
     progress = ProgressTracker(settings.progress_file)
 
+    batch_label = " [batch mode]" if settings.batch_mode else ""
     console.print(
-        f"[bold blue]Running Judge on {len(parse_results)} segments with {settings.judge_model}...[/bold blue]"
+        f"[bold blue]Running Judge on {len(parse_results)} segments with {settings.judge_model}{batch_label}...[/bold blue]"
     )
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
@@ -715,7 +742,10 @@ def sft_judge(
     reject = sum(1 for r in results if r.recommendation == "reject")
     avg_score = sum(r.score for r in results) / len(results) if results else 0.0
 
-    console.print(f"[bold green]✓ Judge complete: accept={accept} review={review} reject={reject} avg_score={avg_score:.2f}[/bold green]")
+    console.print(
+        f"[bold green]✓ Judge complete: accept={accept} review={review} "
+        f"reject={reject} avg_score={avg_score:.2f}[/bold green]"
+    )
 
 
 @sft_app.command("build")
@@ -756,22 +786,34 @@ def sft_run(
     skip_judge: bool = typer.Option(False, "--skip-judge", help="Skip the judge review phase"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run all phases"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+    batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-l",
+        help="Process only first N wine lists (for testing; applies to taxonomy and sampling)",
+    ),
 ):
     """Run the full SFT pipeline end-to-end (init → taxonomy → sample → parse → [judge] → build)."""
-    console.print("[bold blue]Running full SFT pipeline...[/bold blue]")
-
-    # Run each phase in sequence via Typer's invoke mechanism
-    from typer.testing import CliRunner as _R  # noqa: F401 - just for reference
-
-    # Call each sub-command function directly
     from winerank.sft.config import SFTSettings
-    from winerank.sft.dataset_builder import build_dataset
-    from winerank.sft.judge_reviewer import judge_all_segments
+    from winerank.sft.dataset_builder import build_dataset, load_dataset_metadata
+    from winerank.sft.executor import create_executor
+    from winerank.sft.judge_reviewer import (
+        load_all_judge_results,
+        prepare_judge_requests,
+        process_judge_responses,
+    )
     from winerank.sft.manifest import generate_manifest, load_manifest, save_manifest
     from winerank.sft.page_sampler import load_samples, sample_segments, save_samples
     from winerank.sft.progress import ProgressTracker
-    from winerank.sft.taxonomy_extractor import extract_taxonomy_for_all
-    from winerank.sft.wine_parser import load_all_parse_results, parse_all_segments
+    from winerank.sft.taxonomy_extractor import (
+        load_taxonomy,
+        prepare_taxonomy_requests,
+        process_taxonomy_responses,
+    )
+    from winerank.sft.wine_parser import (
+        load_all_parse_results,
+        prepare_parse_requests,
+        process_parse_responses,
+    )
 
     settings_kwargs: dict = {}
     if taxonomy_model:
@@ -788,6 +830,8 @@ def sft_run(
         settings_kwargs["num_samples"] = num_samples
     if min_judge_score is not None:
         settings_kwargs["min_judge_score"] = min_judge_score
+    if batch is not None:
+        settings_kwargs["batch_mode"] = batch
 
     settings = SFTSettings(**settings_kwargs)
     settings.ensure_dirs()
@@ -795,6 +839,12 @@ def sft_run(
 
     if force:
         progress.reset()
+
+    batch_label = " [BATCH MODE - up to 24h turnaround, 50% cheaper]" if settings.batch_mode else ""
+    limit_label = f" (limited to first {limit} lists)" if limit else ""
+    console.print(
+        f"[bold blue]Running full SFT pipeline{limit_label}{batch_label}...[/bold blue]"
+    )
 
     # Init manifest if not present
     if not settings.manifest_file.exists():
@@ -808,41 +858,117 @@ def sft_run(
     else:
         manifest = load_manifest(settings.manifest_file)
 
-    # Phase 1: Taxonomy
-    console.print("[blue]Phase 1: Extracting taxonomy...[/blue]")
-    extract_taxonomy_for_all(manifest.lists, settings=settings, progress=progress, force=force, dry_run=dry_run)
+    entries = manifest.lists[:limit] if limit else manifest.lists
+    entries_by_id = {e.list_id: e for e in entries}
 
-    # Phase 2: Sample
+    # Create the executor once -- all three phases reuse the same instance
+    executor = create_executor(
+        batch_mode=settings.batch_mode,
+        data_dir=settings.data_path,
+        batch_timeout=settings.batch_timeout,
+    )
+
+    # ------------------------------------------------------------------
+    # Phase 1: Taxonomy
+    # ------------------------------------------------------------------
+    console.print(f"[blue]Phase 1: Extracting taxonomy for {len(entries)} lists...[/blue]")
+    if dry_run:
+        console.print("[yellow]  DRY RUN - no LLM calls[/yellow]")
+        taxonomies: dict = {e.list_id: None for e in entries}
+    else:
+        tax_requests = prepare_taxonomy_requests(entries, settings, progress, force=force)
+        if tax_requests:
+            tax_responses = executor.execute(tax_requests)
+            taxonomies = process_taxonomy_responses(
+                tax_responses, settings, progress, entries_by_id=entries_by_id
+            )
+        else:
+            taxonomies = {}
+        # Add already-completed taxonomy results
+        for entry in entries:
+            if entry.list_id not in taxonomies:
+                tax = load_taxonomy(settings.taxonomy_dir, entry.list_id)
+                if tax:
+                    taxonomies[entry.list_id] = tax
+        ok = sum(1 for t in taxonomies.values() if t and t.status == "OK")
+        not_list = sum(1 for t in taxonomies.values() if t and t.status == "NOT_A_LIST")
+        console.print(f"  [green]✓ Taxonomy: {ok} OK, {not_list} NOT_A_LIST[/green]")
+
+    # ------------------------------------------------------------------
+    # Phase 2: Sampling (always local, no LLM)
+    # ------------------------------------------------------------------
     console.print("[blue]Phase 2: Sampling segments...[/blue]")
     not_a_list_ids = progress.get_not_a_list_ids()
+    # When limit is set, scale num_samples so per-list allocation stays the same
+    total_lists = len(manifest.lists)
+    effective_num_samples = (
+        max(1, round(settings.num_samples * len(entries) / total_lists))
+        if limit and total_lists > 0
+        else settings.num_samples
+    )
     samples = sample_segments(
-        entries=manifest.lists,
+        entries=entries,
         not_a_list_ids=not_a_list_ids,
-        num_samples=settings.num_samples,
+        num_samples=effective_num_samples,
         seed=settings.seed,
         min_per_list=settings.min_segments_per_list,
         min_chars=settings.min_segment_chars,
     )
     save_samples(samples, settings.samples_file)
+    console.print(f"  [green]✓ {len(samples)} segments sampled[/green]")
 
-    # Phase 3: Parse
-    console.print("[blue]Phase 3: Parsing segments...[/blue]")
-    parse_all_segments(samples, settings=settings, progress=progress, force=force, dry_run=dry_run)
-
-    # Phase 3.5: Judge (optional)
-    if not skip_judge:
-        console.print("[blue]Phase 3.5: Running judge review...[/blue]")
+    # ------------------------------------------------------------------
+    # Phase 3: Wine Parsing
+    # ------------------------------------------------------------------
+    console.print(
+        f"[blue]Phase 3: Parsing {len(samples)} segments with {settings.teacher_model}...[/blue]"
+    )
+    if not dry_run:
+        parse_requests = prepare_parse_requests(
+            samples, taxonomies, settings, progress, force=force
+        )
+        samples_by_id = {
+            f"parse__{s.list_id}__{s.segment_index}": s for s in samples
+        }
+        if parse_requests:
+            parse_responses = executor.execute(parse_requests)
+            process_parse_responses(parse_responses, samples_by_id, settings, progress)
         parse_results = load_all_parse_results(settings.parsed_dir)
-        judge_all_segments(parse_results, settings=settings, progress=progress, force=force, dry_run=dry_run)
+        ok_p = sum(1 for r in parse_results if not r.parse_error)
+        err_p = sum(1 for r in parse_results if r.parse_error)
+        console.print(f"  [green]✓ Parse: {ok_p} OK, {err_p} errors[/green]")
+    else:
+        parse_results = []
+        console.print("[yellow]  DRY RUN - skipping parse[/yellow]")
 
-    # Phase 4: Build
+    # ------------------------------------------------------------------
+    # Phase 3.5: Judge (optional)
+    # ------------------------------------------------------------------
+    if not skip_judge and not dry_run:
+        console.print(
+            f"[blue]Phase 3.5: Running Judge on {len(parse_results)} segments with {settings.judge_model}...[/blue]"
+        )
+        judge_requests = prepare_judge_requests(parse_results, settings, progress, force=force)
+        if judge_requests:
+            judge_responses = executor.execute(judge_requests)
+            process_judge_responses(judge_responses, settings, progress)
+        judge_results = load_all_judge_results(settings.judged_dir)
+        accept = sum(1 for r in judge_results.values() if r.recommendation == "accept")
+        review_c = sum(1 for r in judge_results.values() if r.recommendation == "review")
+        reject = sum(1 for r in judge_results.values() if r.recommendation == "reject")
+        console.print(f"  [green]✓ Judge: accept={accept} review={review_c} reject={reject}[/green]")
+
+    # ------------------------------------------------------------------
+    # Phase 4: Build dataset
+    # ------------------------------------------------------------------
     console.print("[blue]Phase 4: Building dataset...[/blue]")
     jsonl_path = build_dataset(settings=settings, progress=progress, min_judge_score=min_judge_score)
 
-    from winerank.sft.dataset_builder import load_dataset_metadata
     meta = load_dataset_metadata(settings.dataset_dir)
     if meta:
-        console.print(f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples → {jsonl_path}[/bold green]")
+        console.print(
+            f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples → {jsonl_path}[/bold green]"
+        )
 
 
 @sft_app.command("stats")

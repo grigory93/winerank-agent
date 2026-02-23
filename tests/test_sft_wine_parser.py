@@ -16,7 +16,6 @@ from winerank.sft.wine_parser import (
     _parse_wines_from_response,
     load_all_parse_results,
     load_parse_result,
-    parse_segment,
     save_parse_result,
 )
 
@@ -104,7 +103,7 @@ def test_parse_wines_wrong_type_raises():
 
 
 # ---------------------------------------------------------------------------
-# parse_segment (LLM mocked)
+# parse_all_segments (uses SyncExecutor under the hood -- LLM mocked)
 # ---------------------------------------------------------------------------
 
 
@@ -115,8 +114,8 @@ def _make_litellm_response(content: str, cached: int = 0):
     mock_resp.usage = MagicMock()
     mock_resp.usage.prompt_tokens = 200
     mock_resp.usage.completion_tokens = 100
-    mock_resp.usage.prompt_tokens_details = MagicMock()
-    mock_resp.usage.prompt_tokens_details.cached_tokens = cached
+    mock_resp.usage.cache_read_input_tokens = cached
+    mock_resp.usage.prompt_tokens_details = None
     return mock_resp
 
 
@@ -157,71 +156,101 @@ def progress(tmp_path):
     return ProgressTracker(tmp_path / "sft" / "progress.json")
 
 
-def test_parse_segment_ok(html_sample, taxonomy, sft_settings, progress):
+def test_parse_all_segments_ok(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
+
     sft_settings.ensure_dirs()
+    sft_settings.taxonomy_dir.mkdir(parents=True, exist_ok=True)
 
-    with patch("winerank.sft.wine_parser._call_parsing_model") as mock_call:
-        mock_call.return_value = (WINE_JSON_RESPONSE, {"input": 200, "output": 100, "cached": 0})
-        result = parse_segment(html_sample, taxonomy, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm, \
+         patch("winerank.sft.wine_parser.load_taxonomy", return_value=taxonomy):
+        mock_litellm.completion.return_value = _make_litellm_response(WINE_JSON_RESPONSE)
+        results = parse_all_segments([html_sample], settings=sft_settings, progress=progress)
 
-    assert result is not None
-    assert len(result.wines) == 2
-    assert result.wines[0].name == "Krug Grande Cuvee"
-    assert result.parse_error is None
+    assert len(results) == 1
+    assert len(results[0].wines) == 2
+    assert results[0].wines[0].name == "Krug Grande Cuvee"
+    assert results[0].parse_error is None
 
 
-def test_parse_segment_taxonomy_injected(html_sample, taxonomy, sft_settings, progress):
-    """Taxonomy text should be passed into the parsing messages."""
+def test_parse_all_segments_taxonomy_injected(html_sample, taxonomy, sft_settings, progress):
+    """Taxonomy text should appear in the user message sent to the model."""
+    from winerank.sft.wine_parser import parse_all_segments
+
     sft_settings.ensure_dirs()
     captured_messages = []
 
-    def fake_call(messages, model, **kwargs):
-        captured_messages.extend(messages)
-        return (WINE_JSON_RESPONSE, {"input": 200, "output": 100, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return _make_litellm_response(WINE_JSON_RESPONSE)
 
-    with patch("winerank.sft.wine_parser._call_parsing_model", side_effect=fake_call):
-        parse_segment(html_sample, taxonomy, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm, \
+         patch("winerank.sft.wine_parser.load_taxonomy", return_value=taxonomy):
+        mock_litellm.completion.side_effect = fake_completion
+        parse_all_segments([html_sample], settings=sft_settings, progress=progress)
 
-    # User message should contain taxonomy
-    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    assert len(captured_messages) == 1
+    user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
     user_content_str = str(user_msg["content"])
     assert "Champagne" in user_content_str or "Red Wines" in user_content_str
 
 
-def test_parse_segment_system_prompt_has_schema(html_sample, taxonomy, sft_settings, progress):
+def test_parse_all_segments_system_prompt_has_schema(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
+
     sft_settings.ensure_dirs()
     captured_messages = []
 
-    def fake_call(messages, model, **kwargs):
-        captured_messages.extend(messages)
-        return (WINE_JSON_RESPONSE, {"input": 200, "output": 100, "cached": 0})
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return _make_litellm_response(WINE_JSON_RESPONSE)
 
-    with patch("winerank.sft.wine_parser._call_parsing_model", side_effect=fake_call):
-        parse_segment(html_sample, taxonomy, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm, \
+         patch("winerank.sft.wine_parser.load_taxonomy", return_value=taxonomy):
+        mock_litellm.completion.side_effect = fake_completion
+        parse_all_segments([html_sample], settings=sft_settings, progress=progress)
 
-    system_msg = next(m for m in captured_messages if m["role"] == "system")
+    system_msg = next(m for m in captured_messages[0] if m["role"] == "system")
     assert "varietal" in system_msg["content"]
     assert "appellation" in system_msg["content"]
 
 
-def test_parse_segment_uses_correct_model(html_sample, taxonomy, sft_settings, progress):
-    sft_settings.ensure_dirs()
-    captured_models = []
+def test_parse_all_segments_uses_correct_model(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
 
-    def fake_call(messages, model, **kwargs):
-        captured_models.append(model)
-        return (WINE_JSON_RESPONSE, {"input": 200, "output": 100, "cached": 0})
-
-    with patch("winerank.sft.wine_parser._call_parsing_model", side_effect=fake_call):
-        parse_segment(html_sample, taxonomy, sft_settings, progress)
-
-    assert captured_models[0] == sft_settings.teacher_model
-
-
-def test_parse_segment_skips_if_done(html_sample, taxonomy, sft_settings, progress, tmp_path):
     sft_settings.ensure_dirs()
 
-    # Pre-create a result
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm, \
+         patch("winerank.sft.wine_parser.load_taxonomy", return_value=taxonomy):
+        mock_litellm.completion.return_value = _make_litellm_response(WINE_JSON_RESPONSE)
+        parse_all_segments([html_sample], settings=sft_settings, progress=progress)
+
+    call_kwargs = mock_litellm.completion.call_args[1]
+    assert call_kwargs["model"] == sft_settings.teacher_model
+
+
+def test_parse_all_segments_cache_points_for_anthropic(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
+
+    sft_settings.ensure_dirs()
+
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm, \
+         patch("winerank.sft.wine_parser.load_taxonomy", return_value=taxonomy):
+        mock_litellm.completion.return_value = _make_litellm_response(WINE_JSON_RESPONSE, cached=800)
+        results = parse_all_segments([html_sample], settings=sft_settings, progress=progress)
+
+    # Cache control injection points should cause litellm to receive the kwarg
+    call_kwargs = mock_litellm.completion.call_args[1]
+    assert "cache_control_injection_points" in call_kwargs
+    # Cached tokens should be captured
+    assert results[0].cached_tokens == 800
+
+
+def test_parse_all_segments_skips_if_done(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
+
+    sft_settings.ensure_dirs()
+    # Pre-create a result and mark as done
     existing = PageParseResult(
         segment_id="test-list__0",
         list_id="test-list",
@@ -234,31 +263,21 @@ def test_parse_segment_skips_if_done(html_sample, taxonomy, sft_settings, progre
     save_parse_result(existing, sft_settings.parsed_dir)
     progress.mark_parse_done("test-list", 0)
 
-    with patch("winerank.sft.wine_parser._call_parsing_model") as mock_call:
-        result = parse_segment(html_sample, taxonomy, sft_settings, progress)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        parse_all_segments([html_sample], settings=sft_settings, progress=progress)
 
-    mock_call.assert_not_called()
+    mock_litellm.completion.assert_not_called()
 
 
-def test_parse_segment_dry_run(html_sample, taxonomy, sft_settings, progress):
+def test_parse_all_segments_dry_run(html_sample, taxonomy, sft_settings, progress):
+    from winerank.sft.wine_parser import parse_all_segments
+
     sft_settings.ensure_dirs()
-    with patch("winerank.sft.wine_parser._call_parsing_model") as mock_call:
-        result = parse_segment(html_sample, taxonomy, sft_settings, progress, dry_run=True)
+    with patch("winerank.sft.executor.sync.litellm") as mock_litellm:
+        results = parse_all_segments([html_sample], settings=sft_settings, progress=progress, dry_run=True)
 
-    mock_call.assert_not_called()
-    assert result is None
-
-
-def test_parse_segment_handles_model_error(html_sample, taxonomy, sft_settings, progress):
-    sft_settings.ensure_dirs()
-    with patch("winerank.sft.wine_parser._call_parsing_model") as mock_call:
-        mock_call.side_effect = Exception("API error")
-        result = parse_segment(html_sample, taxonomy, sft_settings, progress)
-
-    # Should return a result with parse_error set
-    assert result is not None
-    assert result.parse_error is not None
-    assert "API error" in result.parse_error
+    mock_litellm.completion.assert_not_called()
+    assert results == []
 
 
 # ---------------------------------------------------------------------------

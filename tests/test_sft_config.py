@@ -6,8 +6,8 @@ def test_default_values():
     from winerank.sft.config import SFTSettings
     s = SFTSettings()
     assert s.taxonomy_model == "gpt-4o-mini"
-    assert s.teacher_model == "claude-opus-4-5"
-    assert s.judge_model == "claude-opus-4-5"
+    assert s.teacher_model == "gpt-5.2"
+    assert s.judge_model == "claude-opus-4-6"
     assert s.training_data_mode == "text"
     assert s.num_samples == 500
     assert s.seed == 42
@@ -88,3 +88,36 @@ def test_ensure_dirs(tmp_path):
     assert s.parsed_dir.exists()
     assert s.judged_dir.exists()
     assert s.dataset_dir.exists()
+
+
+def test_batch_mode_default_false():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.batch_mode is False
+
+
+def test_batch_timeout_default():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.batch_timeout == 7200
+
+
+def test_override_batch_mode_via_env(monkeypatch):
+    monkeypatch.setenv("WINERANK_SFT_BATCH_MODE", "true")
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.batch_mode is True
+
+
+def test_override_batch_timeout_via_env(monkeypatch):
+    monkeypatch.setenv("WINERANK_SFT_BATCH_TIMEOUT", "3600")
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.batch_timeout == 3600
+
+
+def test_batch_mode_override_via_constructor():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings(batch_mode=True, batch_timeout=1800)
+    assert s.batch_mode is True
+    assert s.batch_timeout == 1800

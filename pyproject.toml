@@ -27,6 +27,10 @@ dependencies = [
     "lxml>=5.0",
     # LLM (optional, for future crawler navigation)
     "litellm>=1.40",
+    # SFT: OpenAI SDK for synchronous calls (via litellm) and batch API
+    "openai>=1.50",
+    # SFT: Anthropic SDK for Message Batches API (batch mode)
+    "anthropic>=0.40",
     # SFT: PDF page-to-image rendering (vision mode)
     "pdf2image>=1.17",
     # SFT: YAML manifest support
