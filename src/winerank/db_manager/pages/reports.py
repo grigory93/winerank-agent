@@ -105,7 +105,7 @@ def render():
                 height=320,
                 margin=dict(t=40, b=50, l=120, r=30),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("No restaurant data for Bib Gourmand / 1–3 stars yet")
 
@@ -158,7 +158,7 @@ def render():
                 height=320,
                 margin=dict(t=40, b=50, l=120, r=30),
             )
-            st.plotly_chart(fig_wl, use_container_width=True)
+            st.plotly_chart(fig_wl, width='stretch')
         else:
             st.info("No downloaded wine lists for Bib Gourmand / 1–3 stars yet")
 
@@ -291,6 +291,6 @@ def render():
                         "Started": job.started_at.strftime("%Y-%m-%d %H:%M"),
                     }
                 )
-            st.dataframe(job_data, use_container_width=True)
+            st.dataframe(job_data, width='stretch')
         else:
             st.info("No jobs run yet")

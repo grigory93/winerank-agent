@@ -102,7 +102,7 @@ def _render_pdf_page_image(source_file: str, segment_index: int) -> bool:
         b64 = render_pdf_page_to_base64(Path(source_file), segment_index)
         if b64:
             img_bytes = base64.b64decode(b64)
-            st.image(img_bytes, use_container_width=True, caption=f"Page {segment_index + 1}")
+            st.image(img_bytes, width='stretch', caption=f"Page {segment_index + 1}")
             return True
     except ImportError:
         pass
@@ -173,7 +173,7 @@ def _render_wines_table(parse_result) -> None:
             "Note": (w.note or "")[:60],
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
     st.caption(f"{len(parse_result.wines)} wine{'s' if len(parse_result.wines) != 1 else ''} extracted")
 
 
