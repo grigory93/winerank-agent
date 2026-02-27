@@ -234,7 +234,7 @@ def load_all_taxonomies(
 
 
 # ---------------------------------------------------------------------------
-# Convenience wrapper (backward-compatible for tests and individual commands)
+# Convenience wrapper for individual sft-data extract-taxonomy command
 # ---------------------------------------------------------------------------
 
 def extract_taxonomy_for_all(
@@ -247,10 +247,9 @@ def extract_taxonomy_for_all(
     """
     Run taxonomy extraction for all manifest entries using SyncExecutor.
 
-    This is a convenience wrapper for the individual `sft extract-taxonomy`
-    command and for backward compatibility. The full `sft run` orchestration
-    uses prepare_taxonomy_requests / executor.execute / process_taxonomy_responses
-    directly to support batch mode.
+    Convenience wrapper for the `sft-data extract-taxonomy` command.
+    The full `sft-data run` orchestration uses prepare_taxonomy_requests /
+    executor.execute / process_taxonomy_responses directly to support batch mode.
     """
     from winerank.sft.executor.sync import SyncExecutor
 

@@ -34,7 +34,7 @@ class SFTSettings(BaseSettings):
 
     # Input/output mode for wine parsing
     training_data_mode: Literal["vision", "text"] = Field(
-        default="text",
+        default="vision",
         description="Input mode for wine parsing: 'vision' (page images) or 'text' (extracted text)",
     )
 
@@ -70,6 +70,16 @@ class SFTSettings(BaseSettings):
     min_judge_score: float = Field(
         default=0.0,
         description="Minimum judge score for sample inclusion in final dataset (0.0 = include all)",
+    )
+
+    # Correction loop options
+    max_correction_rounds: int = Field(
+        default=2,
+        description=(
+            "Maximum Teacher correction rounds using Judge feedback. "
+            "0 disables the correction loop entirely. "
+            "Env: WINERANK_SFT_MAX_CORRECTION_ROUNDS"
+        ),
     )
 
     # Batch execution options
@@ -111,6 +121,11 @@ class SFTSettings(BaseSettings):
         return self.data_path / "judged"
 
     @property
+    def corrected_dir(self) -> Path:
+        """Directory for correction snapshots (original parse saved before overwrite)."""
+        return self.data_path / "corrected"
+
+    @property
     def dataset_dir(self) -> Path:
         return self.data_path / "dataset"
 
@@ -133,6 +148,7 @@ class SFTSettings(BaseSettings):
             self.taxonomy_dir,
             self.parsed_dir,
             self.judged_dir,
+            self.corrected_dir,
             self.dataset_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)

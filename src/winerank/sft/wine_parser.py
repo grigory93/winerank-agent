@@ -301,7 +301,7 @@ def load_all_parse_results(parsed_dir: Path) -> list[PageParseResult]:
 
 
 # ---------------------------------------------------------------------------
-# Convenience wrapper (backward-compatible for individual commands)
+# Convenience wrapper for individual sft-data parse command
 # ---------------------------------------------------------------------------
 
 def parse_all_segments(
@@ -314,8 +314,8 @@ def parse_all_segments(
     """
     Parse all sampled segments with the Teacher model using SyncExecutor.
 
-    Convenience wrapper for the `sft parse` command and backward compatibility.
-    The full `sft run` orchestration uses prepare/execute/process directly.
+    Convenience wrapper for the `sft-data parse` command.
+    The full `sft-data run` orchestration uses prepare/execute/process directly.
     """
     from winerank.sft.executor.sync import SyncExecutor
 

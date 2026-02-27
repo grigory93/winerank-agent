@@ -119,7 +119,7 @@ def load_manifest(manifest_path: Path) -> Manifest:
     if not manifest_path.exists():
         raise FileNotFoundError(
             f"Manifest not found at {manifest_path}. "
-            "Run 'winerank sft init' to generate it."
+            "Run 'winerank sft-data init' to generate it."
         )
     with open(manifest_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)

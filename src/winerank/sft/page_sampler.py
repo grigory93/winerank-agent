@@ -162,7 +162,7 @@ def load_samples(samples_file: Path) -> list[SampleManifestEntry]:
     if not samples_file.exists():
         raise FileNotFoundError(
             f"Samples file not found: {samples_file}. "
-            "Run 'winerank sft sample' first."
+            "Run 'winerank sft-data sample' first."
         )
     with open(samples_file, encoding="utf-8") as f:
         data = json.load(f)

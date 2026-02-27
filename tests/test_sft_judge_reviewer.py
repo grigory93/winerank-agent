@@ -11,23 +11,38 @@ from winerank.sft.judge_reviewer import (
     load_judge_result,
     save_judge_result,
 )
-from winerank.sft.schemas import JudgeResult, PageParseResult, WineEntry
+from winerank.sft.schemas import JudgeIssue, JudgeResult, PageParseResult, WineEntry
 
 
 JUDGE_RESPONSE = json.dumps({
     "score": 0.95,
     "wine_count_match": True,
     "issues": [],
+    "needs_reparse": False,
     "recommendation": "accept",
 })
 
 JUDGE_RESPONSE_ISSUES = json.dumps({
     "score": 0.6,
     "wine_count_match": False,
-    "issues": ["Missing wine: Chateau Margaux", "Price incorrect for Dom Perignon"],
+    "issues": [
+        {
+            "type": "missing_wine",
+            "description": "Missing wine: Chateau Margaux",
+            "wine_name": "Chateau Margaux",
+        },
+        {
+            "type": "wrong_price",
+            "description": "Price incorrect for Dom Perignon",
+            "wine_name": "Dom Perignon",
+            "field": "price",
+            "current_value": "850",
+            "expected_value": "85",
+        },
+    ],
+    "needs_reparse": True,
     "recommendation": "review",
 })
-
 
 @pytest.fixture
 def parse_result(tmp_path):
@@ -51,6 +66,7 @@ def sft_settings(tmp_path):
     return SFTSettings(
         data_dir=str(tmp_path / "sft"),
         judge_model="claude-opus-4-5",
+        training_data_mode="text",
     )
 
 
@@ -101,6 +117,11 @@ def test_judge_all_segments_with_issues(parse_result, sft_settings, progress):
     assert results[0].score == 0.6
     assert results[0].recommendation == "review"
     assert len(results[0].issues) == 2
+    assert results[0].needs_reparse is True
+    # Issues are structured JudgeIssue objects
+    issue_types = {i.type for i in results[0].issues}
+    assert "missing_wine" in issue_types
+    assert "wrong_price" in issue_types
 
 
 def test_judge_all_segments_original_text_in_prompt(parse_result, sft_settings, progress):
@@ -116,7 +137,12 @@ def test_judge_all_segments_original_text_in_prompt(parse_result, sft_settings, 
         judge_all_segments([parse_result], sft_settings, progress)
 
     user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
-    assert "Krug NV $450" in user_msg["content"]
+    content = user_msg["content"]
+    if isinstance(content, list):
+        text = " ".join(block.get("text", "") for block in content if isinstance(block, dict))
+    else:
+        text = content
+    assert "Krug NV $450" in text
 
 
 def test_judge_all_segments_taxonomy_in_prompt(parse_result, sft_settings, progress):
@@ -132,7 +158,12 @@ def test_judge_all_segments_taxonomy_in_prompt(parse_result, sft_settings, progr
         judge_all_segments([parse_result], sft_settings, progress)
 
     user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
-    assert "Champagne" in user_msg["content"]
+    content = user_msg["content"]
+    if isinstance(content, list):
+        text = " ".join(block.get("text", "") for block in content if isinstance(block, dict))
+    else:
+        text = content
+    assert "Champagne" in text
 
 
 def test_judge_all_segments_parsed_json_in_prompt(parse_result, sft_settings, progress):
@@ -148,7 +179,12 @@ def test_judge_all_segments_parsed_json_in_prompt(parse_result, sft_settings, pr
         judge_all_segments([parse_result], sft_settings, progress)
 
     user_msg = next(m for m in captured_messages[0] if m["role"] == "user")
-    assert "Krug Grande Cuvee" in user_msg["content"]
+    content = user_msg["content"]
+    if isinstance(content, list):
+        text = " ".join(block.get("text", "") for block in content if isinstance(block, dict))
+    else:
+        text = content
+    assert "Krug Grande Cuvee" in text
 
 
 def test_judge_all_segments_skips_if_done(parse_result, sft_settings, progress):
@@ -220,15 +256,21 @@ def test_save_and_load_judge_result(tmp_path):
         segment_index=0,
         score=0.85,
         wine_count_match=True,
-        issues=["Minor: appellation missing"],
+        issues=[
+            JudgeIssue(type="wrong_attribute", description="Minor: appellation missing",
+                       wine_name="Opus One", field="appellation")
+        ],
         recommendation="accept",
+        needs_reparse=False,
         model_used="claude-opus-4-5",
     )
     save_judge_result(result, tmp_path)
     loaded = load_judge_result(tmp_path, "list1", 0)
     assert loaded is not None
     assert loaded.score == 0.85
-    assert loaded.issues[0] == "Minor: appellation missing"
+    assert loaded.issues[0].type == "wrong_attribute"
+    assert loaded.issues[0].wine_name == "Opus One"
+    assert loaded.needs_reparse is False
 
 
 def test_load_judge_result_not_found(tmp_path):

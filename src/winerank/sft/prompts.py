@@ -118,9 +118,14 @@ You are an expert wine sommelier and data quality reviewer. Your job is to asses
 whether a wine parsing model correctly extracted wine data from a wine list segment.
 
 You will be given:
-1. The original text segment from the wine list
+1. The original wine list segment (text, and a page image when available for PDF sources)
 2. The taxonomy (valid categories) for this wine list
 3. The parsed JSON output from the model
+
+When a page image is provided, use it as the primary source of truth for verifying \
+wine entries and their attributes. The text extraction may be incomplete or garbled \
+for complex layouts (columns, tables, decorative fonts). Cross-reference the image \
+with the parsed output to catch missing wines, hallucinations, and attribute errors.
 
 Evaluate the parsing quality and respond with a JSON object. Do not include any \
 text outside the JSON.
@@ -138,21 +143,46 @@ VALID CATEGORIES (taxonomy):
 PARSED OUTPUT (model result):
 {parsed_json}
 
-Evaluate:
-1. Are all wines from the text present in the parsed output? (no missing wines)
-2. Are there any wines in the output that do NOT appear in the text? (no hallucinations)
+Evaluate (use the page image as primary reference when provided):
+1. Are all wines from the segment present in the parsed output? (no missing wines)
+2. Are there any wines in the output that do NOT appear in the segment? (no hallucinations)
 3. Are the wine attributes (name, winery, varietal, region, appellation, vintage, price) \
 correctly parsed?
-4. Is the wine_type correctly identified based on the text and taxonomy context?
+4. Is the wine_type correctly identified based on the segment and taxonomy context?
 5. Are prices correctly parsed (numeric, correct values)?
 
 Respond with this JSON format:
 {{
   "score": <float 0.0-1.0>,
   "wine_count_match": <true/false>,
-  "issues": ["issue 1", "issue 2"],
+  "issues": [
+    {{
+      "type": "missing_wine|hallucinated_wine|wrong_attribute|wrong_price|other",
+      "description": "human-readable explanation",
+      "wine_name": "name of affected wine or null",
+      "field": "affected attribute name or null",
+      "current_value": "what the model produced or null",
+      "expected_value": "what the correct value should be or null"
+    }}
+  ],
+  "needs_reparse": <true/false>,
   "recommendation": "accept|review|reject"
 }}
+
+Issue types:
+- "missing_wine": A wine present in the text was not extracted
+- "hallucinated_wine": A wine in the output does not appear in the text
+- "wrong_attribute": A specific attribute (varietal, region, appellation, etc.) is incorrect
+- "wrong_price": Price value is wrong (e.g., 850 instead of 85, missing decimal)
+- "other": Any other quality issue
+
+Set "needs_reparse" to true when:
+- Any wines are missing or hallucinated
+- Multiple wrong attributes on the same wine
+- Structural errors that require re-examining the full segment
+
+Set "needs_reparse" to false when:
+- Only minor, isolated attribute corrections are needed
 
 Score guidelines:
 - 0.9-1.0: Excellent, all wines correctly parsed with accurate attributes
@@ -166,6 +196,110 @@ Recommendation guidelines:
 - "review": Score 0.5-0.8, human review recommended before inclusion
 - "reject": Score < 0.5, not suitable for training data
 """
+
+
+# ---------------------------------------------------------------------------
+# Correction prompts
+# ---------------------------------------------------------------------------
+
+# NOTE: CORRECTION_SYSTEM_PROMPT intentionally reuses WINE_PARSING_SYSTEM_PROMPT
+# so that the system message prefix is identical and prompt caching applies
+# across both initial parse requests and correction requests.
+CORRECTION_USER_PROMPT = """\
+The following taxonomy was extracted from this wine list by analyzing its table of \
+contents (if present) and the structural organization of wine sections, headers, and \
+groupings throughout the document. Use it to resolve section context, wine type, \
+region, and other attributes that may not be explicit in the text below.
+
+VALID CATEGORIES:
+{taxonomy_text}
+
+RAW TEXT TO PARSE:
+{segment_text}
+
+PREVIOUS PARSE ATTEMPT (contains errors):
+{previous_json}
+
+QUALITY REVIEW ISSUES IDENTIFIED:
+{issues_text}
+
+Re-parse the raw text above and produce a corrected JSON output. \
+Fix ALL identified issues while keeping correctly-extracted wines intact. \
+Do not remove any wine that was correctly extracted in the previous attempt. \
+Do not add wines that do not appear in the raw text.
+"""
+
+
+def _format_issues_for_correction(issues: list) -> str:
+    """Format structured JudgeIssue objects (or dicts) into readable correction guidance."""
+    if not issues:
+        return "(no specific issues provided)"
+    lines = []
+    for i, issue in enumerate(issues, 1):
+        if isinstance(issue, dict):
+            itype = issue.get("type", "other")
+            desc = issue.get("description", "")
+            wine = issue.get("wine_name")
+            field = issue.get("field")
+            current = issue.get("current_value")
+            expected = issue.get("expected_value")
+        else:
+            itype = getattr(issue, "type", "other")
+            desc = getattr(issue, "description", "")
+            wine = getattr(issue, "wine_name", None)
+            field = getattr(issue, "field", None)
+            current = getattr(issue, "current_value", None)
+            expected = getattr(issue, "expected_value", None)
+
+        line = f"{i}. [{itype.upper()}] {desc}"
+        if wine:
+            line += f" (wine: {wine!r})"
+        if field and (current or expected):
+            line += f" | {field}: {current!r} -> {expected!r}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def build_correction_messages(
+    taxonomy_text: str,
+    segment_text: str,
+    previous_json: str,
+    issues: list,
+    segment_image_b64: str | None = None,
+) -> list[dict]:
+    """
+    Build messages for a correction request.
+
+    Reuses WINE_PARSING_SYSTEM_PROMPT as the system message so that the
+    system prefix is identical to the original parse request -- enabling
+    prompt cache hits on both Anthropic and OpenAI.
+    """
+    issues_text = _format_issues_for_correction(issues)
+    user_content: list[dict] = [
+        {
+            "type": "text",
+            "text": CORRECTION_USER_PROMPT.format(
+                taxonomy_text=taxonomy_text,
+                segment_text=segment_text,
+                previous_json=previous_json,
+                issues_text=issues_text,
+            ),
+        }
+    ]
+
+    if segment_image_b64 is not None:
+        user_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{segment_image_b64}"},
+            },
+            *user_content,
+        ]
+
+    return [
+        {"role": "system", "content": WINE_PARSING_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
 
 
 def build_taxonomy_prompt(full_text: str) -> list[dict]:
@@ -218,16 +352,35 @@ def build_judge_messages(
     segment_text: str,
     taxonomy_text: str,
     parsed_json: str,
+    segment_image_b64: str | None = None,
 ) -> list[dict]:
-    """Build the messages list for judge review."""
-    return [
-        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+    """Build the messages list for judge review.
+
+    When ``segment_image_b64`` is provided (vision mode, PDF sources), the page
+    image is prepended to the user message so the Judge can cross-reference the
+    parsed output against the original page layout.
+    """
+    user_content: list[dict] = [
         {
-            "role": "user",
-            "content": JUDGE_USER_PROMPT.format(
+            "type": "text",
+            "text": JUDGE_USER_PROMPT.format(
                 segment_text=segment_text,
                 taxonomy_text=taxonomy_text,
                 parsed_json=parsed_json,
             ),
-        },
+        }
+    ]
+
+    if segment_image_b64 is not None:
+        user_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{segment_image_b64}"},
+            },
+            *user_content,
+        ]
+
+    return [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
     ]

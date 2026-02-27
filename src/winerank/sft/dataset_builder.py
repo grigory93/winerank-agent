@@ -99,6 +99,7 @@ def build_dataset(
     samples: list[TrainingSample] = []
     judge_filtered = 0
     not_a_list_count = 0  # tracked separately during taxonomy phase
+    corrected_count = 0
 
     for pr in parse_results:
         # Skip segments with parse errors
@@ -121,6 +122,9 @@ def build_dataset(
                 )
                 continue
 
+        if pr.correction_round > 0:
+            corrected_count += 1
+
         samples.append(_build_training_sample(pr, judge))
 
     # Collect stats for metadata
@@ -129,6 +133,8 @@ def build_dataset(
 
     # Count unique lists used in final dataset
     lists_used = len({s.metadata["list_id"] for s in samples if s.metadata})
+
+    correction_rounds = prog_summary.get("correction", {}).get("rounds", [])
 
     meta = DatasetMetadata(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -146,6 +152,8 @@ def build_dataset(
         total_input_tokens=token_totals.get("input", 0),
         total_output_tokens=token_totals.get("output", 0),
         total_cached_tokens=token_totals.get("cached", 0),
+        correction_rounds_run=len(correction_rounds),
+        corrected_samples_count=corrected_count,
     )
 
     # Write JSONL

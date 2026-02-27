@@ -161,3 +161,76 @@ def test_total_tokens(tracker):
     assert tokens["input"] == 450
     assert tokens["output"] == 210
     assert tokens["cached"] == 60
+
+
+# ---------------------------------------------------------------------------
+# Correction
+# ---------------------------------------------------------------------------
+
+
+def test_mark_correction_done(tracker):
+    assert not tracker.is_correction_done("list1", 0, round_num=1)
+    tracker.mark_correction_done("list1", 0, round_num=1, tokens={"input": 300, "output": 80})
+    assert tracker.is_correction_done("list1", 0, round_num=1)
+
+
+def test_correction_error_not_done(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1, error="API failure")
+    assert not tracker.is_correction_done("list1", 0, round_num=1)
+
+
+def test_correction_separate_rounds(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1)
+    assert tracker.is_correction_done("list1", 0, round_num=1)
+    assert not tracker.is_correction_done("list1", 0, round_num=2)
+
+    tracker.mark_correction_done("list1", 0, round_num=2)
+    assert tracker.is_correction_done("list1", 0, round_num=2)
+
+
+def test_get_correction_rounds_done(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1)
+    tracker.mark_correction_done("list1", 0, round_num=2)
+    rounds = tracker.get_correction_rounds_done("list1", 0)
+    assert rounds == [1, 2]
+
+
+def test_get_correction_rounds_done_no_corrections(tracker):
+    assert tracker.get_correction_rounds_done("list1", 0) == []
+
+
+def test_correction_separate_segments(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1)
+    tracker.mark_correction_done("list1", 1, round_num=1)
+    assert tracker.is_correction_done("list1", 0, round_num=1)
+    assert tracker.is_correction_done("list1", 1, round_num=1)
+    assert not tracker.is_correction_done("list1", 2, round_num=1)
+
+
+def test_reset_clears_correction(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1)
+    tracker.reset()
+    assert not tracker.is_correction_done("list1", 0, round_num=1)
+
+
+def test_summary_includes_correction(tracker):
+    tracker.mark_correction_done("list1", 0, round_num=1)
+    tracker.mark_correction_done("list1", 1, round_num=1)
+    tracker.mark_correction_done("list1", 0, round_num=2)
+    tracker.mark_correction_done("list1", 2, round_num=1, error="err")
+
+    summary = tracker.summary()
+    assert summary["correction"]["ok"] == 3
+    assert summary["correction"]["error"] == 1
+    assert summary["correction"]["total"] == 4
+    assert set(summary["correction"]["rounds"]) == {1, 2}
+
+
+def test_total_tokens_includes_correction(tracker):
+    tracker.mark_taxonomy_done("list1", "OK", tokens={"input": 100, "output": 50, "cached": 10})
+    tracker.mark_correction_done("list1", 0, round_num=1, tokens={"input": 400, "output": 120, "cached": 200})
+
+    tokens = tracker.total_tokens()
+    assert tokens["input"] == 500
+    assert tokens["output"] == 170
+    assert tokens["cached"] == 210

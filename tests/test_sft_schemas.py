@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from winerank.sft.schemas import (
     DatasetMetadata,
+    JudgeIssue,
     JudgeResult,
     ManifestEntry,
     PageParseResult,
@@ -153,7 +154,7 @@ def test_judge_result_score_clamped_low():
         segment_index=0,
         score=-0.5,
         wine_count_match=False,
-        issues=["too low"],
+        issues=[JudgeIssue(type="other", description="test")],
         recommendation="reject",
     )
     assert jr.score == 0.0
@@ -168,8 +169,82 @@ def test_judge_result_invalid_recommendation():
             score=0.5,
             wine_count_match=False,
             issues=[],
-            recommendation="maybe",
+            recommendation="maybe",  # pyright: ignore[reportArgumentType]
         )
+
+
+def test_judge_result_needs_reparse_default():
+    r = JudgeResult(
+        segment_id="x__0",
+        list_id="x",
+        segment_index=0,
+        score=0.9,
+        wine_count_match=True,
+        issues=[],
+        recommendation="accept",
+    )
+    assert r.needs_reparse is False
+    assert r.correction_round == 0
+
+
+def test_judge_result_correction_round():
+    r = JudgeResult(
+        segment_id="x__0",
+        list_id="x",
+        segment_index=0,
+        score=0.9,
+        wine_count_match=True,
+        issues=[],
+        recommendation="accept",
+        correction_round=2,
+    )
+    assert r.correction_round == 2
+
+
+# ---------------------------------------------------------------------------
+# JudgeIssue
+# ---------------------------------------------------------------------------
+
+
+def test_judge_issue_all_types():
+    for itype in ("missing_wine", "hallucinated_wine", "wrong_attribute", "wrong_price", "other"):
+        issue = JudgeIssue(type=itype, description=f"test {itype}")
+        assert issue.type == itype
+
+
+def test_judge_issue_invalid_type():
+    with pytest.raises(ValidationError):
+        JudgeIssue(type="unknown_type", description="test")  # pyright: ignore[reportArgumentType]
+
+
+def test_judge_issue_optional_fields():
+    issue = JudgeIssue(type="wrong_attribute", description="Missing appellation",
+                       wine_name="Opus One", field="appellation",
+                       current_value=None, expected_value="Napa Valley")
+    assert issue.wine_name == "Opus One"
+    assert issue.current_value is None
+    assert issue.expected_value == "Napa Valley"
+
+
+def test_judge_result_structured_issues():
+    r = JudgeResult(
+        segment_id="x__0",
+        list_id="x",
+        segment_index=0,
+        score=0.6,
+        wine_count_match=False,
+        issues=[
+            JudgeIssue(type="missing_wine", description="Dom Perignon not found", wine_name="Dom Perignon"),
+            JudgeIssue(type="wrong_price", description="Price wrong", field="price",
+                      current_value="850", expected_value="85"),
+        ],
+        recommendation="review",
+        needs_reparse=True,
+    )
+    assert r.issues[0].type == "missing_wine"
+    assert r.issues[0].wine_name == "Dom Perignon"
+    assert r.issues[1].type == "wrong_price"
+    assert r.needs_reparse is True
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +275,7 @@ def test_wine_entry_full():
 
 def test_wine_entry_missing_name_raises():
     with pytest.raises(ValidationError):
-        WineEntry()
+        WineEntry()  # pyright: ignore[reportCallIssue]
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +295,21 @@ def test_page_parse_result_basic():
     )
     assert pr.segment_id == "list1__3"
     assert len(pr.wines) == 1
+    assert pr.correction_round == 0  # default
+
+
+def test_page_parse_result_correction_round():
+    pr = PageParseResult(
+        segment_id="list1__3",
+        list_id="list1",
+        segment_index=3,
+        source_file="test.pdf",
+        segment_text="Some wines here",
+        taxonomy_text="Champagne\nRed Wines",
+        wines=[WineEntry(name="Dom Perignon")],
+        correction_round=2,
+    )
+    assert pr.correction_round == 2
 
 
 # ---------------------------------------------------------------------------

@@ -16,8 +16,8 @@ app = typer.Typer(
 db_app = typer.Typer(help="Database management commands")
 app.add_typer(db_app, name="db")
 
-sft_app = typer.Typer(help="SFT training data generation commands")
-app.add_typer(sft_app, name="sft")
+sft_data_app = typer.Typer(help="SFT training data generation commands")
+app.add_typer(sft_data_app, name="sft-data")
 
 console = Console()
 
@@ -499,7 +499,7 @@ def _sft_settings_override(
     return SFTSettings(**kwargs)
 
 
-@sft_app.command("init")
+@sft_data_app.command("init")
 def sft_init(
     examples_dir: Optional[Path] = typer.Option(
         None,
@@ -537,7 +537,7 @@ def sft_init(
     console.print(f"  {len(manifest.lists)} wine lists registered")
 
 
-@sft_app.command("extract-taxonomy")
+@sft_data_app.command("extract-taxonomy")
 def sft_extract_taxonomy(
     taxonomy_model: Optional[str] = typer.Option(None, "--taxonomy-model", help="Override taxonomy model"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed extractions"),
@@ -563,7 +563,7 @@ def sft_extract_taxonomy(
     try:
         manifest = load_manifest(settings.manifest_file)
     except FileNotFoundError:
-        console.print("[bold red]Manifest not found. Run 'winerank sft init' first.[/bold red]")
+        console.print("[bold red]Manifest not found. Run 'winerank sft-data init' first.[/bold red]")
         raise typer.Exit(1)
 
     entries = manifest.lists[:limit] if limit else manifest.lists
@@ -595,7 +595,7 @@ def sft_extract_taxonomy(
     console.print(f"  OK: {ok} | NOT_A_LIST: {not_list} | Errors: {errors}")
 
 
-@sft_app.command("sample")
+@sft_data_app.command("sample")
 def sft_sample(
     seed: Optional[int] = typer.Option(None, "--seed", help="Random seed"),
     num_samples: Optional[int] = typer.Option(None, "--num-samples", "-n", help="Target sample count"),
@@ -622,7 +622,7 @@ def sft_sample(
     try:
         manifest = load_manifest(settings.manifest_file)
     except FileNotFoundError:
-        console.print("[bold red]Manifest not found. Run 'winerank sft init' first.[/bold red]")
+        console.print("[bold red]Manifest not found. Run 'winerank sft-data init' first.[/bold red]")
         raise typer.Exit(1)
 
     progress = ProgressTracker(settings.progress_file)
@@ -655,7 +655,7 @@ def sft_sample(
     console.print(f"[bold green]✓ {len(samples)} segments sampled → {settings.samples_file}[/bold green]")
 
 
-@sft_app.command("parse")
+@sft_data_app.command("parse")
 def sft_parse(
     teacher_model: Optional[str] = typer.Option(None, "--teacher-model", help="Override teacher model"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Input mode: vision or text"),
@@ -682,7 +682,7 @@ def sft_parse(
     try:
         samples = load_samples(settings.samples_file)
     except FileNotFoundError:
-        console.print("[bold red]samples.json not found. Run 'winerank sft sample' first.[/bold red]")
+        console.print("[bold red]samples.json not found. Run 'winerank sft-data sample' first.[/bold red]")
         raise typer.Exit(1)
 
     progress = ProgressTracker(settings.progress_file)
@@ -692,6 +692,11 @@ def sft_parse(
         f"[bold blue]Parsing {len(samples)} segments with {settings.teacher_model} "
         f"(mode={settings.training_data_mode}){batch_label}...[/bold blue]"
     )
+    if settings.training_data_mode == "vision":
+        console.print(
+            "[yellow]ℹ Vision mode enabled — page images sent to Teacher model "
+            "(increases token consumption but improves extraction accuracy for PDF sources).[/yellow]"
+        )
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
 
@@ -701,7 +706,7 @@ def sft_parse(
     console.print(f"[bold green]✓ Parsing complete: {ok} OK, {errors} errors[/bold green]")
 
 
-@sft_app.command("judge")
+@sft_data_app.command("judge")
 def sft_judge(
     judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Override judge model"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed reviews"),
@@ -724,7 +729,7 @@ def sft_judge(
     settings.ensure_dirs()
     parse_results = load_all_parse_results(settings.parsed_dir)
     if not parse_results:
-        console.print("[yellow]No parsed results found. Run 'winerank sft parse' first.[/yellow]")
+        console.print("[yellow]No parsed results found. Run 'winerank sft-data parse' first.[/yellow]")
         raise typer.Exit(0)
 
     progress = ProgressTracker(settings.progress_file)
@@ -733,6 +738,11 @@ def sft_judge(
     console.print(
         f"[bold blue]Running Judge on {len(parse_results)} segments with {settings.judge_model}{batch_label}...[/bold blue]"
     )
+    if settings.training_data_mode == "vision":
+        console.print(
+            "[yellow]ℹ Vision mode enabled — page images sent to Judge model "
+            "(increases token consumption but improves accuracy for PDF sources).[/yellow]"
+        )
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
 
@@ -748,7 +758,136 @@ def sft_judge(
     )
 
 
-@sft_app.command("build")
+@sft_data_app.command("correct")
+def sft_correct(
+    teacher_model: Optional[str] = typer.Option(None, "--teacher-model", help="Override teacher model for corrections"),
+    judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Override judge model for re-scoring"),
+    max_rounds: Optional[int] = typer.Option(None, "--max-rounds", help="Maximum correction rounds (default from .env)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run already completed corrections"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
+    batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
+):
+    """Phase 3.6: Run Teacher correction loop using Judge feedback (requires judge results)."""
+    from winerank.sft.config import SFTSettings
+    from winerank.sft.corrector import prepare_correction_requests, process_correction_responses
+    from winerank.sft.executor import create_executor
+    from winerank.sft.judge_reviewer import (
+        load_all_judge_results,
+        prepare_judge_requests,
+        process_judge_responses,
+    )
+    from winerank.sft.progress import ProgressTracker
+    from winerank.sft.taxonomy_extractor import load_all_taxonomies
+    from winerank.sft.wine_parser import load_all_parse_results
+
+    settings_kwargs: dict = {}
+    if teacher_model:
+        settings_kwargs["teacher_model"] = teacher_model
+    if judge_model:
+        settings_kwargs["judge_model"] = judge_model
+    if batch is not None:
+        settings_kwargs["batch_mode"] = batch
+    if max_rounds is not None:
+        settings_kwargs["max_correction_rounds"] = max_rounds
+
+    settings = SFTSettings(**settings_kwargs)
+    settings.ensure_dirs()
+    progress = ProgressTracker(settings.progress_file)
+
+    parse_results = load_all_parse_results(settings.parsed_dir)
+    if not parse_results:
+        console.print("[yellow]No parsed results found. Run 'winerank sft-data parse' first.[/yellow]")
+        raise typer.Exit(0)
+
+    judge_results = load_all_judge_results(settings.judged_dir)
+    if not judge_results:
+        console.print("[yellow]No judge results found. Run 'winerank sft-data judge' first.[/yellow]")
+        raise typer.Exit(0)
+
+    taxonomies = load_all_taxonomies(settings.taxonomy_dir)
+    executor = create_executor(
+        batch_mode=settings.batch_mode,
+        data_dir=settings.data_path,
+        batch_timeout=settings.batch_timeout,
+    )
+
+    batch_label = " [batch mode]" if settings.batch_mode else ""
+    console.print(
+        f"[bold blue]Running correction loop (max {settings.max_correction_rounds} rounds){batch_label}...[/bold blue]"
+    )
+
+    parse_results_by_id = {r.segment_id: r for r in parse_results}
+
+    for round_num in range(1, settings.max_correction_rounds + 1):
+        flagged = [
+            j for j in judge_results.values()
+            if j.recommendation in ("review", "reject") or j.needs_reparse
+        ]
+        if not flagged:
+            console.print(f"[green]  ✓ Round {round_num}: no flagged segments, done[/green]")
+            break
+
+        console.print(
+            f"[blue]Correction round {round_num}: {len(flagged)} flagged segments...[/blue]"
+        )
+
+        if dry_run:
+            console.print(f"[yellow]  DRY RUN: would correct {len(flagged)} segments[/yellow]")
+            continue
+
+        current_parse_results = load_all_parse_results(settings.parsed_dir)
+        parse_results_by_id = {r.segment_id: r for r in current_parse_results}
+
+        corr_requests = prepare_correction_requests(
+            parse_results=current_parse_results,
+            judge_results=judge_results,
+            taxonomies=taxonomies,
+            settings=settings,
+            progress=progress,
+            round_num=round_num,
+            force=force,
+        )
+
+        if corr_requests:
+            corr_responses = executor.execute(corr_requests)
+            corrected = process_correction_responses(
+                responses=corr_responses,
+                parse_results_by_id=parse_results_by_id,
+                settings=settings,
+                progress=progress,
+                round_num=round_num,
+            )
+            for r in corrected:
+                parse_results_by_id[r.segment_id] = r
+            console.print(f"  [green]✓ Corrected {len(corrected)} segments[/green]")
+
+        # Re-judge corrected segments
+        corrected_list = [
+            parse_results_by_id[j.segment_id]
+            for j in flagged
+            if j.segment_id in parse_results_by_id
+            and not parse_results_by_id[j.segment_id].parse_error
+        ]
+        if corrected_list:
+            rejudge_requests = prepare_judge_requests(corrected_list, settings, progress, force=True)
+            if rejudge_requests:
+                rejudge_responses = executor.execute(rejudge_requests)
+                new_judge = process_judge_responses(
+                    rejudge_responses, settings, progress, correction_round=round_num
+                )
+                for j in new_judge:
+                    judge_results[j.segment_id] = j
+                accept_after = sum(1 for j in new_judge if j.recommendation == "accept")
+                still_bad = sum(1 for j in new_judge if j.recommendation != "accept")
+                console.print(
+                    f"  [green]✓ Re-judge round {round_num}: {accept_after} now accepted, "
+                    f"{still_bad} still flagged[/green]"
+                )
+
+    console.print("[bold green]✓ Correction loop complete[/bold green]")
+
+
+@sft_data_app.command("build")
 def sft_build(
     min_judge_score: Optional[float] = typer.Option(None, "--min-judge-score", help="Minimum judge score to include (0.0-1.0)"),
 ):
@@ -774,7 +913,7 @@ def sft_build(
         console.print(f"  Judge filtered: {meta.judge_filtered_count}")
 
 
-@sft_app.command("run")
+@sft_data_app.command("run")
 def sft_run(
     taxonomy_model: Optional[str] = typer.Option(None, "--taxonomy-model"),
     teacher_model: Optional[str] = typer.Option(None, "--teacher-model"),
@@ -784,6 +923,11 @@ def sft_run(
     num_samples: Optional[int] = typer.Option(None, "--num-samples", "-n"),
     min_judge_score: Optional[float] = typer.Option(None, "--min-judge-score"),
     skip_judge: bool = typer.Option(False, "--skip-judge", help="Skip the judge review phase"),
+    skip_correction: bool = typer.Option(False, "--skip-correction", help="Skip the correction loop (requires judge)"),
+    max_correction_rounds: Optional[int] = typer.Option(
+        None, "--max-correction-rounds",
+        help="Override max correction rounds (0 to disable, default from .env)",
+    ),
     force: bool = typer.Option(False, "--force", "-f", help="Re-run all phases"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without LLM calls"),
     batch: Optional[bool] = typer.Option(None, "--batch/--no-batch", help="Use batch API (50% cheaper, async)"),
@@ -792,8 +936,9 @@ def sft_run(
         help="Process only first N wine lists (for testing; applies to taxonomy and sampling)",
     ),
 ):
-    """Run the full SFT pipeline end-to-end (init → taxonomy → sample → parse → [judge] → build)."""
+    """Run the full SFT pipeline end-to-end (init → taxonomy → sample → parse → [judge] → [correct] → build)."""
     from winerank.sft.config import SFTSettings
+    from winerank.sft.corrector import prepare_correction_requests, process_correction_responses
     from winerank.sft.dataset_builder import build_dataset, load_dataset_metadata
     from winerank.sft.executor import create_executor
     from winerank.sft.judge_reviewer import (
@@ -832,6 +977,8 @@ def sft_run(
         settings_kwargs["min_judge_score"] = min_judge_score
     if batch is not None:
         settings_kwargs["batch_mode"] = batch
+    if max_correction_rounds is not None:
+        settings_kwargs["max_correction_rounds"] = max_correction_rounds
 
     settings = SFTSettings(**settings_kwargs)
     settings.ensure_dirs()
@@ -845,6 +992,11 @@ def sft_run(
     console.print(
         f"[bold blue]Running full SFT pipeline{limit_label}{batch_label}...[/bold blue]"
     )
+    if settings.training_data_mode == "vision":
+        console.print(
+            "[yellow]ℹ Vision mode enabled — page images sent to both Teacher and Judge models. "
+            "This increases token consumption but improves extraction accuracy for PDF sources.[/yellow]"
+        )
 
     # Init manifest if not present
     if not settings.manifest_file.exists():
@@ -944,6 +1096,7 @@ def sft_run(
     # ------------------------------------------------------------------
     # Phase 3.5: Judge (optional)
     # ------------------------------------------------------------------
+    judge_results: dict = {}
     if not skip_judge and not dry_run:
         console.print(
             f"[blue]Phase 3.5: Running Judge on {len(parse_results)} segments with {settings.judge_model}...[/blue]"
@@ -951,12 +1104,96 @@ def sft_run(
         judge_requests = prepare_judge_requests(parse_results, settings, progress, force=force)
         if judge_requests:
             judge_responses = executor.execute(judge_requests)
-            process_judge_responses(judge_responses, settings, progress)
+            process_judge_responses(judge_responses, settings, progress, correction_round=0)
         judge_results = load_all_judge_results(settings.judged_dir)
         accept = sum(1 for r in judge_results.values() if r.recommendation == "accept")
         review_c = sum(1 for r in judge_results.values() if r.recommendation == "review")
         reject = sum(1 for r in judge_results.values() if r.recommendation == "reject")
         console.print(f"  [green]✓ Judge: accept={accept} review={review_c} reject={reject}[/green]")
+
+    # ------------------------------------------------------------------
+    # Phase 3.6/3.7: Correction loop (optional, requires judge results)
+    # ------------------------------------------------------------------
+    run_correction = (
+        not skip_judge
+        and not skip_correction
+        and not dry_run
+        and judge_results
+        and settings.max_correction_rounds > 0
+    )
+    if run_correction:
+        parse_results_by_id = {r.segment_id: r for r in parse_results}
+        for round_num in range(1, settings.max_correction_rounds + 1):
+            flagged = [
+                j for j in judge_results.values()
+                if j.recommendation in ("review", "reject") or j.needs_reparse
+            ]
+            if not flagged:
+                console.print(
+                    f"[green]  ✓ Correction round {round_num}: no flagged segments, stopping early[/green]"
+                )
+                break
+
+            console.print(
+                f"[blue]Phase 3.{5 + round_num}: Correction round {round_num} "
+                f"({len(flagged)} flagged segments)...[/blue]"
+            )
+
+            # Refresh parse_results from disk (may have been updated by prior round)
+            from winerank.sft.wine_parser import load_all_parse_results
+            current_parse_results = load_all_parse_results(settings.parsed_dir)
+            parse_results_by_id = {r.segment_id: r for r in current_parse_results}
+
+            corr_requests = prepare_correction_requests(
+                parse_results=current_parse_results,
+                judge_results=judge_results,
+                taxonomies=taxonomies,
+                settings=settings,
+                progress=progress,
+                round_num=round_num,
+                force=force,
+            )
+            if not corr_requests:
+                console.print(f"  [yellow]  All segments already corrected in round {round_num}[/yellow]")
+            else:
+                corr_responses = executor.execute(corr_requests)
+                corrected = process_correction_responses(
+                    responses=corr_responses,
+                    parse_results_by_id=parse_results_by_id,
+                    settings=settings,
+                    progress=progress,
+                    round_num=round_num,
+                )
+                console.print(f"  [green]✓ Corrected {len(corrected)} segments[/green]")
+                # Update parse_results_by_id with corrected results
+                for r in corrected:
+                    parse_results_by_id[r.segment_id] = r
+
+            # Re-judge the corrected segments (force=True to overwrite prior judge results)
+            corrected_list = [
+                parse_results_by_id[j.segment_id]
+                for j in flagged
+                if j.segment_id in parse_results_by_id
+                and not parse_results_by_id[j.segment_id].parse_error
+            ]
+            if corrected_list:
+                rejudge_requests = prepare_judge_requests(
+                    corrected_list, settings, progress, force=True
+                )
+                if rejudge_requests:
+                    rejudge_responses = executor.execute(rejudge_requests)
+                    new_judge = process_judge_responses(
+                        rejudge_responses, settings, progress,
+                        correction_round=round_num,
+                    )
+                    for j in new_judge:
+                        judge_results[j.segment_id] = j
+                    accept_after = sum(1 for j in new_judge if j.recommendation == "accept")
+                    still_bad = sum(1 for j in new_judge if j.recommendation != "accept")
+                    console.print(
+                        f"  [green]✓ Re-judge round {round_num}: {accept_after} now accepted, "
+                        f"{still_bad} still flagged[/green]"
+                    )
 
     # ------------------------------------------------------------------
     # Phase 4: Build dataset
@@ -966,12 +1203,15 @@ def sft_run(
 
     meta = load_dataset_metadata(settings.dataset_dir)
     if meta:
+        correction_info = ""
+        if run_correction:
+            correction_info = f", {meta.corrected_samples_count} corrected"
         console.print(
-            f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples → {jsonl_path}[/bold green]"
+            f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples{correction_info} → {jsonl_path}[/bold green]"
         )
 
 
-@sft_app.command("stats")
+@sft_data_app.command("stats")
 def sft_stats():
     """Show dataset statistics and pipeline progress summary."""
     from winerank.sft.config import get_sft_settings

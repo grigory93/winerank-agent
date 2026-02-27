@@ -141,6 +141,71 @@ Use this command when you've manually downloaded a wine list PDF (e.g., from a b
 
 > **Note**: When both `--restaurant` and `--michelin` are provided, `--restaurant` takes priority and `--michelin` is ignored.
 
+#### SFT Training Data Pipeline
+
+The `winerank sft-data` commands generate a training dataset for supervised fine-tuning of smaller LLMs to parse wine lists. The pipeline uses a cheap **Taxonomy** model to validate and extract wine categories from each list, then a powerful **Teacher** model to parse sampled segments into gold JSON. An optional **Judge** model reviews results; a **correction loop** can re-run the Teacher with Judge feedback to fix issues before building the final dataset.
+
+**Configure in `.env`** (see Configuration below for full list):
+
+```bash
+WINERANK_SFT_TAXONOMY_MODEL=gpt-4o-mini
+WINERANK_SFT_TEACHER_MODEL=gpt-5.2
+WINERANK_SFT_JUDGE_MODEL=claude-4-opus-20250115
+WINERANK_SFT_TRAINING_DATA_MODE=vision   # or text
+WINERANK_SFT_NUM_SAMPLES=500
+WINERANK_SFT_BATCH_MODE=false            # true for 50% cheaper batch API (async)
+```
+
+**Run the full pipeline** (init → taxonomy → sample → parse → judge → correction → build):
+
+```bash
+uv run winerank sft-data run
+```
+
+With batch mode (50% cheaper, async, up to 24h turnaround) and limit to 5 lists for testing:
+
+```bash
+uv run winerank sft-data run --batch --limit 5
+```
+
+Skip the Judge and correction loop to save cost:
+
+```bash
+uv run winerank sft-data run --skip-judge --skip-correction
+```
+
+**Run phases individually:**
+
+```bash
+uv run winerank sft-data init                  # Generate manifest from data/examples/
+uv run winerank sft-data extract-taxonomy      # Phase 1: validate + extract taxonomy
+uv run winerank sft-data sample                # Phase 2: sample segments for training
+uv run winerank sft-data parse                # Phase 3: Teacher parses segments to JSON
+uv run winerank sft-data judge                # Phase 3.5: Judge reviews parsed results
+uv run winerank sft-data correct              # Phase 3.6: Correction loop (Teacher + re-judge)
+uv run winerank sft-data build                # Phase 4: Assemble JSONL dataset
+uv run winerank sft-data stats                # Show progress and dataset summary
+```
+
+**Common flags** (apply to `run` and to the relevant phase commands):
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Process only the first N wine lists (reduces lists and segments proportionally) |
+| `--batch` / `--no-batch` | Use provider batch APIs (50% cheaper, async) |
+| `--dry-run` | Show what would run without calling LLMs |
+| `--force` | Re-run completed steps |
+| `--skip-judge` | Omit Judge review (run only) |
+| `--skip-correction` | Omit correction loop (run only) |
+| `--max-correction-rounds N` | Max Teacher correction rounds (default 2; 0 disables) |
+| `--mode vision\|text` | Use page images (default) or text only for Teacher and Judge |
+| `--seed N` | Random seed for reproducible sampling |
+| `--num-samples N` | Target number of segments to sample |
+| `--min-judge-score F` | Minimum Judge score to include in dataset (build) |
+| `--taxonomy-model`, `--teacher-model`, `--judge-model` | Override models per run |
+
+**Output:** Training data is written to `data/sft/dataset/` (JSONL + metadata). Use the **DB Manager** → **SFT Training Data Review** page to compare original segments, taxonomy, parsed JSON, and Judge results side-by-side.
+
 #### Launch DB Manager
 
 ```bash
@@ -154,6 +219,7 @@ The DB Manager UI will open at http://localhost:8501 with pages for:
 - **Wines**: Search wines (populated by Parser)
 - **Jobs**: Monitor crawler jobs
 - **Sites of Record**: Manage starting URLs
+- **SFT Training Data Review**: Compare original segments, taxonomy, parsed JSON, and Judge results for training data validation
 
 #### Database Management
 
@@ -214,6 +280,17 @@ WINERANK_LLM_MAX_TOKENS=500                  # Max tokens per response
 # Playwright
 WINERANK_HEADLESS=true                       # Run browser in headless mode (set false if a site returns 403 on wine-list downloads)
 WINERANK_BROWSER_TIMEOUT=30000               # Browser timeout (ms)
+
+# SFT Training Data Pipeline (winerank sft-data)
+WINERANK_SFT_TAXONOMY_MODEL=gpt-4o-mini      # Cheap model for taxonomy extraction
+WINERANK_SFT_TEACHER_MODEL=gpt-5.2                  # Teacher for gold wine parsing
+WINERANK_SFT_JUDGE_MODEL=claude-4-opus-20250115     # Optional judge for quality review
+WINERANK_SFT_TRAINING_DATA_MODE=vision       # vision or text
+WINERANK_SFT_NUM_SAMPLES=500                 # Target segments for training set
+WINERANK_SFT_SEED=42                         # Random seed for sampling
+WINERANK_SFT_BATCH_MODE=false                # true = batch API (50% cheaper, async)
+WINERANK_SFT_BATCH_TIMEOUT=86400             # Max seconds to wait for batch (default 24h)
+WINERANK_SFT_MAX_CORRECTION_ROUNDS=2         # Teacher correction rounds (0 = disabled)
 ```
 
 ## Wine List Discovery

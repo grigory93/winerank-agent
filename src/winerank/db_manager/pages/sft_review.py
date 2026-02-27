@@ -3,8 +3,8 @@
 Four-panel layout:
   1. Original segment (rendered PDF page or HTML text)
   2. Taxonomy (hierarchical wine categories)
-  3. Parsed wines (JSON / table view)
-  4. Judge review results (score, recommendation, issues)
+  3. Parsed wines (JSON / table view) with correction round badge
+  4. Judge review results (structured issues, score, recommendation)
 """
 from __future__ import annotations
 
@@ -93,6 +93,48 @@ def _render_recommendation_pill(rec: str) -> str:
     colors = {"accept": "#28a745", "review": "#ffc107", "reject": "#dc3545"}
     color = colors.get(rec, "#6c757d")
     return f'<span style="background:{color};color:white;padding:3px 10px;border-radius:12px;font-size:0.85em">{rec.upper()}</span>'
+
+
+def _render_correction_badge(correction_round: int) -> str:
+    if correction_round == 0:
+        return '<span style="background:#6c757d;color:white;padding:2px 8px;border-radius:8px;font-size:0.8em">ORIGINAL</span>'
+    colors = ["#17a2b8", "#6f42c1", "#fd7e14"]
+    color = colors[min(correction_round - 1, len(colors) - 1)]
+    return f'<span style="background:{color};color:white;padding:2px 8px;border-radius:8px;font-size:0.8em">CORRECTED R{correction_round}</span>'
+
+
+def _render_issue_card(issue: dict) -> None:
+    """Render a single structured JudgeIssue as a colored card."""
+    itype = issue.get("type", "other")
+    desc = issue.get("description", "")
+    wine_name = issue.get("wine_name")
+    field = issue.get("field")
+    current = issue.get("current_value")
+    expected = issue.get("expected_value")
+
+    # Color by issue type
+    type_styles = {
+        "missing_wine": ("🍷", "#dc3545"),
+        "hallucinated_wine": ("👻", "#fd7e14"),
+        "wrong_attribute": ("🔧", "#ffc107"),
+        "wrong_price": ("💰", "#e83e8c"),
+        "other": ("ℹ️", "#6c757d"),
+    }
+    icon, color = type_styles.get(itype, ("ℹ️", "#6c757d"))
+
+    label = itype.replace("_", " ").upper()
+    header = f'{icon} <span style="color:{color};font-weight:bold">{label}</span>'
+    if wine_name:
+        header += f' — <em>{wine_name}</em>'
+
+    detail_parts = [desc]
+    if field and (current or expected):
+        detail_parts.append(f"`{field}`: `{current}` → `{expected}`")
+
+    with st.container():
+        st.markdown(header, unsafe_allow_html=True)
+        for part in detail_parts:
+            st.caption(part)
 
 
 def _render_pdf_page_image(source_file: str, segment_index: int) -> bool:
@@ -190,7 +232,7 @@ def render():
 
     # Check pipeline state
     if not settings.manifest_file.exists():
-        st.warning("No manifest found. Run `winerank sft init` to get started.")
+        st.warning("No manifest found. Run `winerank sft-data init` to get started.")
         return
 
     manifest = _load_manifest()
@@ -208,7 +250,6 @@ def render():
     st.sidebar.header("Filters & Navigation")
 
     # List selector
-    list_ids = [e.list_id for e in manifest.lists]
     list_names = {e.list_id: e.restaurant_name for e in manifest.lists}
 
     # Filter by judge recommendation (if judge results available)
@@ -219,42 +260,63 @@ def render():
             index=0,
         )
         min_score = st.sidebar.slider("Min Judge Score", 0.0, 1.0, 0.0, 0.05)
+        # Filter by correction status
+        correction_filter = st.sidebar.selectbox(
+            "Filter by Correction Status",
+            ["All", "Original only", "Corrected only"],
+            index=0,
+        )
     else:
         rec_filter = "All"
         min_score = 0.0
+        correction_filter = "All"
 
     # Build list of available segments (from samples.json if available, else all parsed)
     available_segments: list[tuple[str, int]] = []
 
+    def _segment_passes_filters(list_id: str, seg_idx: int) -> bool:
+        seg_id = f"{list_id}__{seg_idx}"
+        if rec_filter != "All" and seg_id in all_judge_results:
+            jr = all_judge_results[seg_id]
+            if jr.get("recommendation") != rec_filter:
+                return False
+            if jr.get("score", 0.0) < min_score:
+                return False
+
+        if correction_filter != "All":
+            # Load parse result to check correction_round
+            from winerank.sft.wine_parser import load_parse_result
+            pr = load_parse_result(settings.parsed_dir, list_id, seg_idx)
+            if pr is None:
+                return False
+            is_corrected = pr.correction_round > 0
+            if correction_filter == "Original only" and is_corrected:
+                return False
+            if correction_filter == "Corrected only" and not is_corrected:
+                return False
+
+        return True
+
     if samples:
         for s in samples:
-            seg_id = f"{s.list_id}__{s.segment_index}"
-            if rec_filter != "All" and seg_id in all_judge_results:
-                jr = all_judge_results[seg_id]
-                if jr.get("recommendation") != rec_filter:
-                    continue
-                if jr.get("score", 0.0) < min_score:
-                    continue
-            available_segments.append((s.list_id, s.segment_index))
+            if _segment_passes_filters(s.list_id, s.segment_index):
+                available_segments.append((s.list_id, s.segment_index))
     else:
         # Fallback: list all parsed results
         if settings.parsed_dir.exists():
             for f in sorted(settings.parsed_dir.glob("*.json")):
                 parts = f.stem.rsplit("__", 1)
                 if len(parts) == 2:
-                    lid, sidx = parts[0], int(parts[1])
-                    seg_id = f"{lid}__{sidx}"
-                    if rec_filter != "All" and seg_id in all_judge_results:
-                        jr = all_judge_results[seg_id]
-                        if jr.get("recommendation") != rec_filter:
-                            continue
-                        if jr.get("score", 0.0) < min_score:
-                            continue
-                    available_segments.append((lid, sidx))
+                    try:
+                        lid, sidx = parts[0], int(parts[1])
+                    except ValueError:
+                        continue
+                    if _segment_passes_filters(lid, sidx):
+                        available_segments.append((lid, sidx))
 
     if not available_segments:
         st.info(
-            "No segments found. Run `winerank sft parse` to generate parsed results, "
+            "No segments found. Run `winerank sft-data parse` to generate parsed results, "
             "or adjust the filters."
         )
         return
@@ -272,24 +334,40 @@ def render():
         st.sidebar.markdown("### Judge Summary")
         counts = {"accept": 0, "review": 0, "reject": 0}
         scores = []
+        corrected_total = 0
         for jr in all_judge_results.values():
             rec = jr.get("recommendation", "review")
             counts[rec] = counts.get(rec, 0) + 1
             scores.append(jr.get("score", 0.0))
+            if jr.get("correction_round", 0) > 0:
+                corrected_total += 1
         st.sidebar.metric("Accept", counts["accept"])
         st.sidebar.metric("Review", counts["review"])
         st.sidebar.metric("Reject", counts["reject"])
         if scores:
             st.sidebar.metric("Avg Score", f"{sum(scores)/len(scores):.3f}")
+        if corrected_total:
+            st.sidebar.metric("Corrected Segments", corrected_total)
 
     # ---------------------------------------------------------------------------
     # Main content: header row
     # ---------------------------------------------------------------------------
-    st.markdown(f"**List:** {list_names.get(selected_list_id, selected_list_id)}  |  "
-                f"**Segment:** {selected_seg_idx}  |  "
-                f"**ID:** `{selected_list_id}__{selected_seg_idx}`")
-
     parse_result = _load_parse_result(selected_list_id, selected_seg_idx)
+    correction_round = parse_result.correction_round if parse_result else 0
+
+    col_hdr1, col_hdr2 = st.columns([3, 1])
+    with col_hdr1:
+        st.markdown(
+            f"**List:** {list_names.get(selected_list_id, selected_list_id)}  |  "
+            f"**Segment:** {selected_seg_idx}  |  "
+            f"**ID:** `{selected_list_id}__{selected_seg_idx}`"
+        )
+    with col_hdr2:
+        st.markdown(
+            _render_correction_badge(correction_round),
+            unsafe_allow_html=True,
+        )
+
     taxonomy = _load_taxonomy(selected_list_id)
     judge_result_dict = all_judge_results.get(f"{selected_list_id}__{selected_seg_idx}")
 
@@ -322,7 +400,7 @@ def render():
                 label_visibility="collapsed",
             )
         else:
-            st.info("No extracted text available. Run `winerank sft parse`.")
+            st.info("No extracted text available. Run `winerank sft-data parse`.")
 
     with col2:
         st.subheader("Taxonomy")
@@ -347,6 +425,8 @@ def render():
                 st.write(f"Output: {parse_result.output_tokens:,}")
                 st.write(f"Cached: {parse_result.cached_tokens:,}")
                 st.write(f"Model: {parse_result.model_used}")
+                if correction_round > 0:
+                    st.write(f"Correction round: {correction_round}")
 
     # ---------------------------------------------------------------------------
     # Judge review section (full width, collapsed by default)
@@ -357,7 +437,7 @@ def render():
         with st.expander("Judge Review (not run)", expanded=False):
             st.info(
                 "No judge results available. "
-                "Run `winerank sft judge` to score parsing quality."
+                "Run `winerank sft-data judge` to score parsing quality."
             )
     else:
         with st.expander("Judge Review Results", expanded=True):
@@ -367,10 +447,12 @@ def render():
                 score = judge_result_dict.get("score", 0.0)
                 rec = judge_result_dict.get("recommendation", "review")
                 count_match = judge_result_dict.get("wine_count_match", False)
+                needs_reparse = judge_result_dict.get("needs_reparse", False)
                 issues = judge_result_dict.get("issues", [])
+                judge_correction_round = judge_result_dict.get("correction_round", 0)
 
-                # Score + recommendation header
-                score_col, rec_col, count_col = st.columns(3)
+                # Score + recommendation + correction round header
+                score_col, rec_col, count_col, round_col = st.columns(4)
                 with score_col:
                     st.markdown(f"**Score:** {_render_score_badge(score)}", unsafe_allow_html=True)
                 with rec_col:
@@ -381,12 +463,23 @@ def render():
                 with count_col:
                     match_icon = "✅" if count_match else "❌"
                     st.markdown(f"**Wine Count Match:** {match_icon}")
+                with round_col:
+                    if needs_reparse:
+                        st.markdown("**Needs Reparse:** ⚠️ Yes")
+                    else:
+                        st.markdown("**Needs Reparse:** ✅ No")
 
-                # Issues
+                if judge_correction_round > 0:
+                    st.caption(f"Judged after correction round {judge_correction_round}")
+
+                # Structured issues
                 if issues:
-                    st.markdown("**Issues flagged by Judge:**")
+                    st.markdown(f"**Issues flagged by Judge ({len(issues)}):**")
                     for issue in issues:
-                        st.markdown(f"- {issue}")
+                        # Support both dict and JudgeIssue-like objects
+                        if hasattr(issue, "model_dump"):
+                            issue = issue.model_dump()
+                        _render_issue_card(issue)
                 else:
                     st.success("No issues flagged.")
 

@@ -15,11 +15,21 @@ from typing import Optional
 
 from winerank.sft.config import SFTSettings
 from winerank.sft.executor.types import LLMRequest, LLMResponse
+from winerank.sft.page_reader import render_pdf_page_to_base64
 from winerank.sft.progress import ProgressTracker
 from winerank.sft.prompts import build_judge_messages
-from winerank.sft.schemas import JudgeResult, PageParseResult
+from winerank.sft.schemas import JudgeIssue, JudgeResult, PageParseResult
 
 logger = logging.getLogger(__name__)
+
+_ANTHROPIC_CACHE_POINTS = [
+    {"location": "system"},
+    {"location": "message_content", "message_index": 1, "content_index": 0},
+]
+
+
+def _is_anthropic_model(model: str) -> bool:
+    return "claude" in model.lower() or "anthropic" in model.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -64,11 +74,22 @@ def prepare_judge_requests(
         parsed_json = json.dumps(
             {"wines": [w.model_dump() for w in parse_result.wines]}, indent=2
         )
+
+        image_b64: Optional[str] = None
+        if settings.training_data_mode == "vision" and parse_result.source_file:
+            source = Path(parse_result.source_file)
+            if source.suffix.lower() == ".pdf":
+                image_b64 = render_pdf_page_to_base64(source, seg_idx)
+
         messages = build_judge_messages(
             segment_text=parse_result.segment_text,
             taxonomy_text=parse_result.taxonomy_text,
             parsed_json=parsed_json,
+            segment_image_b64=image_b64,
         )
+
+        cache_points = _ANTHROPIC_CACHE_POINTS if _is_anthropic_model(settings.judge_model) else None
+
         requests.append(LLMRequest(
             custom_id=f"judge__{list_id}__{seg_idx}",
             model=settings.judge_model,
@@ -76,6 +97,7 @@ def prepare_judge_requests(
             max_tokens=2048,
             temperature=0.0,
             response_format={"type": "json_object"},
+            cache_control_injection_points=cache_points,
         ))
 
     return requests
@@ -89,6 +111,7 @@ def process_judge_responses(
     responses: list[LLMResponse],
     settings: SFTSettings,
     progress: ProgressTracker,
+    correction_round: int = 0,
 ) -> list[JudgeResult]:
     """
     Parse executor responses into JudgeResult objects and persist them.
@@ -97,6 +120,8 @@ def process_judge_responses(
         responses: LLMResponse objects from executor.execute().
         settings: SFT configuration.
         progress: Progress tracker to update.
+        correction_round: Which correction round produced the parsed output
+            being judged (0 = original parse, 1+ = correction round).
 
     Returns:
         List of successfully parsed JudgeResult objects.
@@ -122,6 +147,7 @@ def process_judge_responses(
                 list_id=list_id,
                 segment_index=seg_idx,
                 model=settings.judge_model,
+                correction_round=correction_round,
             )
             judge_result.input_tokens = response.tokens.get("input", 0)
             judge_result.output_tokens = response.tokens.get("output", 0)
@@ -134,8 +160,8 @@ def process_judge_responses(
         save_judge_result(judge_result, settings.judged_dir)
         progress.mark_judge_done(list_id, seg_idx, tokens=response.tokens)
         logger.info(
-            "[%s] Segment %d: judge score=%.2f recommendation=%s",
-            list_id, seg_idx, judge_result.score, judge_result.recommendation,
+            "[%s] Segment %d: judge score=%.2f recommendation=%s (correction_round=%d)",
+            list_id, seg_idx, judge_result.score, judge_result.recommendation, correction_round,
         )
         results.append(judge_result)
 
@@ -152,8 +178,11 @@ def _parse_judge_response(
     list_id: str,
     segment_index: int,
     model: str,
+    correction_round: int = 0,
 ) -> JudgeResult:
-    """Parse the raw JSON response from the judge model into a JudgeResult."""
+    """
+    Parse the raw JSON response from the judge model into a JudgeResult.
+    """
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError as exc:
@@ -161,14 +190,18 @@ def _parse_judge_response(
             f"Judge returned invalid JSON: {exc}\nRaw: {raw_text[:500]}"
         ) from exc
 
+    raw_issues = data.get("issues", [])
+
     return JudgeResult(
         segment_id=segment_id,
         list_id=list_id,
         segment_index=segment_index,
         score=float(data.get("score", 0.0)),
         wine_count_match=bool(data.get("wine_count_match", False)),
-        issues=data.get("issues", []),
+        issues=raw_issues,
         recommendation=data.get("recommendation", "review"),
+        needs_reparse=bool(data.get("needs_reparse", False)),
+        correction_round=correction_round,
         raw_response=raw_text,
         model_used=model,
     )
@@ -218,7 +251,7 @@ def load_all_judge_results(judged_dir: Path) -> dict[str, JudgeResult]:
 
 
 # ---------------------------------------------------------------------------
-# Convenience wrapper (backward-compatible for individual commands)
+# Convenience wrapper for individual sft-data judge command
 # ---------------------------------------------------------------------------
 
 def judge_all_segments(
@@ -231,8 +264,8 @@ def judge_all_segments(
     """
     Run judge review on all parsed segments using SyncExecutor.
 
-    Convenience wrapper for the `sft judge` command and backward compatibility.
-    The full `sft run` orchestration uses prepare/execute/process directly.
+    Convenience wrapper for the `sft-data judge` command.
+    The full `sft-data run` orchestration uses prepare/execute/process directly.
     """
     from winerank.sft.executor.sync import SyncExecutor
 

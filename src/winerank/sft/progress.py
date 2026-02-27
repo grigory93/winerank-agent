@@ -15,6 +15,7 @@ from typing import Any, Optional
 _KEY_TAXONOMY = "taxonomy"
 _KEY_PARSE = "parse"
 _KEY_JUDGE = "judge"
+_KEY_CORRECTION = "correction"
 
 
 class ProgressTracker:
@@ -42,6 +43,7 @@ class ProgressTracker:
             _KEY_TAXONOMY: {},
             _KEY_PARSE: {},
             _KEY_JUDGE: {},
+            _KEY_CORRECTION: {},
         }
         self._load()
 
@@ -54,8 +56,8 @@ class ProgressTracker:
             try:
                 with open(self._file, encoding="utf-8") as f:
                     loaded = json.load(f)
-                # Merge keys -- keeps forward-compatible with new keys
-                for k in (_KEY_TAXONOMY, _KEY_PARSE, _KEY_JUDGE):
+                # Merge keys -- forward-compatible with new keys
+                for k in (_KEY_TAXONOMY, _KEY_PARSE, _KEY_JUDGE, _KEY_CORRECTION):
                     if k in loaded:
                         self._data[k] = loaded[k]
             except (json.JSONDecodeError, OSError):
@@ -64,6 +66,7 @@ class ProgressTracker:
                     _KEY_TAXONOMY: {},
                     _KEY_PARSE: {},
                     _KEY_JUDGE: {},
+                    _KEY_CORRECTION: {},
                 }
 
     def save(self) -> None:
@@ -78,6 +81,7 @@ class ProgressTracker:
             _KEY_TAXONOMY: {},
             _KEY_PARSE: {},
             _KEY_JUDGE: {},
+            _KEY_CORRECTION: {},
         }
         self.save()
 
@@ -165,6 +169,48 @@ class ProgressTracker:
         self.save()
 
     # ------------------------------------------------------------------
+    # Correction
+    # ------------------------------------------------------------------
+
+    def _correction_key(self, list_id: str, segment_index: int, round_num: int) -> str:
+        return f"{list_id}__{segment_index}__r{round_num}"
+
+    def is_correction_done(self, list_id: str, segment_index: int, round_num: int) -> bool:
+        key = self._correction_key(list_id, segment_index, round_num)
+        return self._data[_KEY_CORRECTION].get(key, {}).get("status") == "OK"
+
+    def mark_correction_done(
+        self,
+        list_id: str,
+        segment_index: int,
+        round_num: int,
+        tokens: Optional[dict[str, int]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        key = self._correction_key(list_id, segment_index, round_num)
+        status = "ERROR" if error else "OK"
+        self._data[_KEY_CORRECTION][key] = {
+            "status": status,
+            "round": round_num,
+            **({"tokens": tokens} if tokens else {}),
+            **({"error": error} if error else {}),
+        }
+        self.save()
+
+    def get_correction_rounds_done(self, list_id: str, segment_index: int) -> list[int]:
+        """Return list of completed correction round numbers for a segment."""
+        prefix = f"{list_id}__{segment_index}__r"
+        rounds = []
+        for key, val in self._data[_KEY_CORRECTION].items():
+            if key.startswith(prefix) and val.get("status") == "OK":
+                try:
+                    round_num = int(key[len(prefix):])
+                    rounds.append(round_num)
+                except ValueError:
+                    pass
+        return sorted(rounds)
+
+    # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
 
@@ -173,6 +219,7 @@ class ProgressTracker:
         tax = self._data[_KEY_TAXONOMY]
         parse = self._data[_KEY_PARSE]
         judge = self._data[_KEY_JUDGE]
+        correction = self._data[_KEY_CORRECTION]
 
         return {
             "taxonomy": {
@@ -191,12 +238,18 @@ class ProgressTracker:
                 "error": sum(1 for v in judge.values() if v.get("status") == "ERROR"),
                 "total": len(judge),
             },
+            "correction": {
+                "ok": sum(1 for v in correction.values() if v.get("status") == "OK"),
+                "error": sum(1 for v in correction.values() if v.get("status") == "ERROR"),
+                "total": len(correction),
+                "rounds": sorted({v.get("round", 0) for v in correction.values()}),
+            },
         }
 
     def total_tokens(self) -> dict[str, int]:
         """Sum up all tracked token usage."""
         totals = {"input": 0, "output": 0, "cached": 0}
-        for section in (_KEY_TAXONOMY, _KEY_PARSE, _KEY_JUDGE):
+        for section in (_KEY_TAXONOMY, _KEY_PARSE, _KEY_JUDGE, _KEY_CORRECTION):
             for entry in self._data[section].values():
                 t = entry.get("tokens", {})
                 totals["input"] += t.get("input", 0)

@@ -8,7 +8,7 @@ def test_default_values():
     assert s.taxonomy_model == "gpt-4o-mini"
     assert s.teacher_model == "gpt-5.2"
     assert s.judge_model == "claude-opus-4-6"
-    assert s.training_data_mode == "text"
+    assert s.training_data_mode == "vision"
     assert s.num_samples == 500
     assert s.seed == 42
     assert s.min_segment_chars == 50
@@ -94,6 +94,31 @@ def test_batch_mode_default_false():
     from winerank.sft.config import SFTSettings
     s = SFTSettings()
     assert s.batch_mode is False
+
+
+def test_max_correction_rounds_default():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.max_correction_rounds == 2
+
+
+def test_max_correction_rounds_from_env(monkeypatch):
+    monkeypatch.setenv("WINERANK_SFT_MAX_CORRECTION_ROUNDS", "0")
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert s.max_correction_rounds == 0
+
+
+def test_max_correction_rounds_override():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings(max_correction_rounds=3)
+    assert s.max_correction_rounds == 3
+
+
+def test_corrected_dir_property():
+    from winerank.sft.config import SFTSettings
+    s = SFTSettings()
+    assert "corrected" in str(s.corrected_dir)
 
 
 def test_batch_timeout_default():

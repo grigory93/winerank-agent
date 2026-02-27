@@ -23,7 +23,7 @@ from winerank.sft.schemas import (
 @pytest.fixture
 def sft_settings(tmp_path):
     from winerank.sft.config import SFTSettings
-    return SFTSettings(data_dir=str(tmp_path / "sft"))
+    return SFTSettings(data_dir=str(tmp_path / "sft"), training_data_mode="text")
 
 
 @pytest.fixture
@@ -387,8 +387,12 @@ class TestPrepareJudgeRequests:
         reqs = prepare_judge_requests([result], sft_settings, progress)
 
         user_content = reqs[0].messages[1]["content"]
-        assert "some wines here" in user_content
-        assert "Wine A" in user_content
+        if isinstance(user_content, list):
+            text = " ".join(block.get("text", "") for block in user_content if isinstance(block, dict))
+        else:
+            text = user_content
+        assert "some wines here" in text
+        assert "Wine A" in text
 
 
 class TestProcessJudgeResponses:
@@ -436,7 +440,9 @@ class TestProcessJudgeResponses:
             content=json.dumps({
                 "score": 0.7,
                 "wine_count_match": False,
-                "issues": ["Missing vintage"],
+                "issues": [
+                    {"type": "other", "description": "Missing vintage"},
+                ],
                 "recommendation": "review",
             }),
             tokens={"input": 200, "output": 60, "cached": 0},

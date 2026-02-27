@@ -130,11 +130,23 @@ class PageParseResult(BaseModel):
     output_tokens: int = 0
     cached_tokens: int = 0
     model_used: Optional[str] = None
+    correction_round: int = Field(default=0, description="0=original parse, 1+=correction round that produced this result")
 
 
 # ---------------------------------------------------------------------------
 # Judge review schemas
 # ---------------------------------------------------------------------------
+
+
+class JudgeIssue(BaseModel):
+    """A structured issue identified by the Judge model."""
+
+    type: Literal["missing_wine", "hallucinated_wine", "wrong_attribute", "wrong_price", "other"]
+    description: str
+    wine_name: Optional[str] = None
+    field: Optional[str] = None
+    current_value: Optional[str] = None
+    expected_value: Optional[str] = None
 
 
 class JudgeResult(BaseModel):
@@ -145,8 +157,10 @@ class JudgeResult(BaseModel):
     segment_index: int
     score: float = Field(ge=0.0, le=1.0, description="Overall correctness 0.0-1.0")
     wine_count_match: bool = Field(description="Did Teacher find the right number of wines?")
-    issues: list[str] = Field(default_factory=list, description="Specific problems found")
+    issues: list[JudgeIssue] = Field(default_factory=list, description="Specific problems found")
     recommendation: Literal["accept", "review", "reject"]
+    needs_reparse: bool = Field(default=False, description="Judge recommends Teacher should re-parse")
+    correction_round: int = Field(default=0, description="Which correction round produced the judged parse (0=original)")
     raw_response: Optional[str] = None
     input_tokens: int = 0
     output_tokens: int = 0
@@ -216,3 +230,5 @@ class DatasetMetadata(BaseModel):
     total_output_tokens: int = 0
     total_cached_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    correction_rounds_run: int = 0
+    corrected_samples_count: int = 0
