@@ -113,6 +113,18 @@ class WineEntry(BaseModel):
     price: Optional[float] = None
     note: Optional[str] = None
 
+    @field_validator("vintage", mode="before")
+    @classmethod
+    def _coerce_vintage_to_str(cls, v: Any) -> Optional[str]:
+        """Accept int/float from LLM JSON and coerce to str (e.g. 2023 -> '2023')."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            return str(int(v))
+        return v
+
 
 class PageParseResult(BaseModel):
     """Result of parsing a single segment via the Teacher model."""

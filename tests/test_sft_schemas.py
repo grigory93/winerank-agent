@@ -273,6 +273,18 @@ def test_wine_entry_full():
     assert w.price == 450.0
 
 
+def test_wine_entry_vintage_int_coerced_to_str():
+    """LLM often returns vintage as JSON number; validator coerces to str."""
+    w = WineEntry(name="Meursault", vintage=2023)  # pyright: ignore[reportArgumentType]
+    assert w.vintage == "2023"
+    w2 = WineEntry(name="Meursault Blagny", vintage=2022)  # pyright: ignore[reportArgumentType]
+    assert w2.vintage == "2022"
+    w3 = WineEntry(name="NV Wine", vintage=None)
+    assert w3.vintage is None
+    w4 = WineEntry(name="String vintage", vintage="NV")
+    assert w4.vintage == "NV"
+
+
 def test_wine_entry_missing_name_raises():
     with pytest.raises(ValidationError):
         WineEntry()  # pyright: ignore[reportCallIssue]

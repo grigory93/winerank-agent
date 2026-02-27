@@ -102,6 +102,20 @@ def test_parse_wines_wrong_type_raises():
         _parse_wines_from_response(json.dumps({"wines": "not_a_list"}))
 
 
+def test_parse_wines_vintage_int_coerced():
+    """Teacher model often returns vintage as JSON number; parser accepts and coerces to str."""
+    payload = {
+        "wines": [
+            {"name": "Meursault", "winery": "Antoine Jobard", "vintage": 2023, "price": 395},
+            {"name": "Meursault Blagny 1er Cru", "vintage": 2022},
+        ]
+    }
+    wines = _parse_wines_from_response(json.dumps(payload))
+    assert len(wines) == 2
+    assert wines[0].vintage == "2023"
+    assert wines[1].vintage == "2022"
+
+
 # ---------------------------------------------------------------------------
 # parse_all_segments (uses SyncExecutor under the hood -- LLM mocked)
 # ---------------------------------------------------------------------------
