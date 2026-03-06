@@ -1,5 +1,6 @@
 """Command-line interface for Winerank using Typer."""
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,15 @@ sft_data_app = typer.Typer(help="SFT training data generation commands")
 app.add_typer(sft_data_app, name="sft-data")
 
 console = Console()
+
+
+def _format_duration(seconds: float) -> str:
+    """Format elapsed seconds as e.g. '12.3s' or '1m 5.2s'."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    m = int(seconds // 60)
+    s = seconds - m * 60
+    return f"{m}m {s:.1f}s"
 
 
 def _get_alembic_cfg():
@@ -579,6 +589,7 @@ def sft_extract_taxonomy(
     if dry_run:
         console.print("[yellow]DRY RUN mode - no LLM calls will be made[/yellow]")
 
+    t0 = time.perf_counter()
     results = extract_taxonomy_for_all(
         entries,
         settings=settings,
@@ -591,8 +602,10 @@ def sft_extract_taxonomy(
     not_list = sum(1 for r in results.values() if r and r.status == "NOT_A_LIST")
     errors = sum(1 for r in results.values() if r is None)
 
+    elapsed = time.perf_counter() - t0
     console.print("[bold green]✓ Taxonomy extraction complete[/bold green]")
     console.print(f"  OK: {ok} | NOT_A_LIST: {not_list} | Errors: {errors}")
+    console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("sample")
@@ -642,6 +655,7 @@ def sft_sample(
         f"{limit_label} (seed={settings.seed})...[/bold blue]"
     )
 
+    t0 = time.perf_counter()
     samples = sample_segments(
         entries=entries,
         not_a_list_ids=not_a_list_ids,
@@ -652,7 +666,9 @@ def sft_sample(
     )
     settings.ensure_dirs()
     save_samples(samples, settings.samples_file)
+    elapsed = time.perf_counter() - t0
     console.print(f"[bold green]✓ {len(samples)} segments sampled → {settings.samples_file}[/bold green]")
+    console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("parse")
@@ -700,10 +716,13 @@ def sft_parse(
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
 
+    t0 = time.perf_counter()
     results = parse_all_segments(samples, settings=settings, progress=progress, force=force, dry_run=dry_run)
     ok = sum(1 for r in results if not r.parse_error)
     errors = sum(1 for r in results if r.parse_error)
+    elapsed = time.perf_counter() - t0
     console.print(f"[bold green]✓ Parsing complete: {ok} OK, {errors} errors[/bold green]")
+    console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("judge")
@@ -746,16 +765,19 @@ def sft_judge(
     if dry_run:
         console.print("[yellow]DRY RUN mode[/yellow]")
 
+    t0 = time.perf_counter()
     results = judge_all_segments(parse_results, settings=settings, progress=progress, force=force, dry_run=dry_run)
     accept = sum(1 for r in results if r.recommendation == "accept")
     review = sum(1 for r in results if r.recommendation == "review")
     reject = sum(1 for r in results if r.recommendation == "reject")
     avg_score = sum(r.score for r in results) / len(results) if results else 0.0
 
+    elapsed = time.perf_counter() - t0
     console.print(
         f"[bold green]✓ Judge complete: accept={accept} review={review} "
         f"reject={reject} avg_score={avg_score:.2f}[/bold green]"
     )
+    console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("correct")
@@ -816,6 +838,7 @@ def sft_correct(
         f"[bold blue]Running correction loop (max {settings.max_correction_rounds} rounds){batch_label}...[/bold blue]"
     )
 
+    t0 = time.perf_counter()
     parse_results_by_id = {r.segment_id: r for r in parse_results}
 
     for round_num in range(1, settings.max_correction_rounds + 1):
@@ -884,7 +907,9 @@ def sft_correct(
                     f"{still_bad} still flagged[/green]"
                 )
 
+    elapsed = time.perf_counter() - t0
     console.print("[bold green]✓ Correction loop complete[/bold green]")
+    console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("build")
@@ -902,7 +927,9 @@ def sft_build(
     progress = ProgressTracker(settings.progress_file)
 
     console.print("[bold blue]Building training dataset...[/bold blue]")
+    t0 = time.perf_counter()
     jsonl_path = build_dataset(settings=settings, progress=progress, min_judge_score=min_judge_score)
+    elapsed = time.perf_counter() - t0
 
     from winerank.sft.dataset_builder import load_dataset_metadata
     meta = load_dataset_metadata(settings.dataset_dir)
@@ -911,6 +938,7 @@ def sft_build(
         console.print(f"  Lists used: {meta.num_lists_used}")
         console.print(f"  NOT_A_LIST filtered: {meta.not_a_list_count}")
         console.print(f"  Judge filtered: {meta.judge_filtered_count}")
+        console.print(f"  [dim]Time: {_format_duration(elapsed)}[/dim]")
 
 
 @sft_data_app.command("run")
@@ -1019,11 +1047,13 @@ def sft_run(
         data_dir=settings.data_path,
         batch_timeout=settings.batch_timeout,
     )
+    run_start = time.perf_counter()
 
     # ------------------------------------------------------------------
     # Phase 1: Taxonomy
     # ------------------------------------------------------------------
     console.print(f"[blue]Phase 1: Extracting taxonomy for {len(entries)} lists...[/blue]")
+    phase_start = time.perf_counter()
     if dry_run:
         console.print("[yellow]  DRY RUN - no LLM calls[/yellow]")
         taxonomies: dict = {e.list_id: None for e in entries}
@@ -1045,11 +1075,13 @@ def sft_run(
         ok = sum(1 for t in taxonomies.values() if t and t.status == "OK")
         not_list = sum(1 for t in taxonomies.values() if t and t.status == "NOT_A_LIST")
         console.print(f"  [green]✓ Taxonomy: {ok} OK, {not_list} NOT_A_LIST[/green]")
+    console.print(f"  [dim]Phase 1 time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     # ------------------------------------------------------------------
     # Phase 2: Sampling (always local, no LLM)
     # ------------------------------------------------------------------
     console.print("[blue]Phase 2: Sampling segments...[/blue]")
+    phase_start = time.perf_counter()
     not_a_list_ids = progress.get_not_a_list_ids()
     # When limit is set, scale num_samples so per-list allocation stays the same
     total_lists = len(manifest.lists)
@@ -1068,6 +1100,7 @@ def sft_run(
     )
     save_samples(samples, settings.samples_file)
     console.print(f"  [green]✓ {len(samples)} segments sampled[/green]")
+    console.print(f"  [dim]Phase 2 time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     # ------------------------------------------------------------------
     # Phase 3: Wine Parsing
@@ -1075,6 +1108,7 @@ def sft_run(
     console.print(
         f"[blue]Phase 3: Parsing {len(samples)} segments with {settings.teacher_model}...[/blue]"
     )
+    phase_start = time.perf_counter()
     if not dry_run:
         parse_requests = prepare_parse_requests(
             samples, taxonomies, settings, progress, force=force
@@ -1092,6 +1126,7 @@ def sft_run(
     else:
         parse_results = []
         console.print("[yellow]  DRY RUN - skipping parse[/yellow]")
+    console.print(f"  [dim]Phase 3 time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     # ------------------------------------------------------------------
     # Phase 3.5: Judge (optional)
@@ -1101,6 +1136,7 @@ def sft_run(
         console.print(
             f"[blue]Phase 3.5: Running Judge on {len(parse_results)} segments with {settings.judge_model}...[/blue]"
         )
+        phase_start = time.perf_counter()
         judge_requests = prepare_judge_requests(parse_results, settings, progress, force=force)
         if judge_requests:
             judge_responses = executor.execute(judge_requests)
@@ -1110,6 +1146,7 @@ def sft_run(
         review_c = sum(1 for r in judge_results.values() if r.recommendation == "review")
         reject = sum(1 for r in judge_results.values() if r.recommendation == "reject")
         console.print(f"  [green]✓ Judge: accept={accept} review={review_c} reject={reject}[/green]")
+        console.print(f"  [dim]Phase 3.5 time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     # ------------------------------------------------------------------
     # Phase 3.6/3.7: Correction loop (optional, requires judge results)
@@ -1122,6 +1159,7 @@ def sft_run(
         and settings.max_correction_rounds > 0
     )
     if run_correction:
+        phase_start = time.perf_counter()
         parse_results_by_id = {r.segment_id: r for r in parse_results}
         for round_num in range(1, settings.max_correction_rounds + 1):
             flagged = [
@@ -1194,12 +1232,15 @@ def sft_run(
                         f"  [green]✓ Re-judge round {round_num}: {accept_after} now accepted, "
                         f"{still_bad} still flagged[/green]"
                     )
+        console.print(f"  [dim]Correction loop time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     # ------------------------------------------------------------------
     # Phase 4: Build dataset
     # ------------------------------------------------------------------
     console.print("[blue]Phase 4: Building dataset...[/blue]")
+    phase_start = time.perf_counter()
     jsonl_path = build_dataset(settings=settings, progress=progress, min_judge_score=min_judge_score)
+    console.print(f"  [dim]Phase 4 time: {_format_duration(time.perf_counter() - phase_start)}[/dim]")
 
     meta = load_dataset_metadata(settings.dataset_dir)
     if meta:
@@ -1209,6 +1250,8 @@ def sft_run(
         console.print(
             f"[bold green]✓ Pipeline complete: {meta.num_samples_actual} samples{correction_info} → {jsonl_path}[/bold green]"
         )
+    total_elapsed = time.perf_counter() - run_start
+    console.print(f"[dim]Total time: {_format_duration(total_elapsed)}[/dim]")
 
 
 @sft_data_app.command("stats")
